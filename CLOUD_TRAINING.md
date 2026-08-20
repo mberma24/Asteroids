@@ -46,6 +46,24 @@ round that policy cannot already clear and starts there. Do not hardcode a stage
 version of this file suggested `START_STAGE=16`, which dropped a policy five rungs above
 where it could promote and left it grinding.
 
+### Running it forever
+
+`Restart=always` under systemd is what turns "a long job" into "a permanent one": it
+survives reboots, Oracle's maintenance events, an OOM kill, and an exhausted episode budget,
+because `cloud/train-forever.sh` resumes from the newest *complete* checkpoint every time it
+starts.
+
+```bash
+sudo cp cloud/asteroids.service /etc/systemd/system/
+sudo systemctl enable --now asteroids       # starts now, and on every boot
+systemctl status asteroids                  # is it alive
+tail -f cloud-train.log                     # what it is doing
+sudo systemctl stop asteroids               # pause; enable --now resumes where it left off
+```
+
+Disk is not a constraint: the trainer keeps only the newest 3 checkpoints (~9 MB each), so a
+run directory stays near 60 MB against the free tier's 200 GB.
+
 ### Caveats worth knowing before you sign up
 
 - **A1 capacity is often unavailable** in busy regions; "Out of host capacity" is the usual
@@ -53,7 +71,12 @@ where it could promote and left it grinding.
   signup.
 - A **credit card is required for identity verification**. Always Free shapes do not charge
   it; be careful not to provision anything outside them.
-- Oracle reclaims **idle** Always Free compute. A box running PPO continuously is not idle.
+- Oracle reclaims **idle** Always Free compute -- judged over a 7-day window on CPU,
+  network, and memory. A box training PPO pegs all four cores, so it is never a candidate.
+  This is exactly why the answer to "can I leave it running forever" is yes.
+- **Keep the account in good standing.** Always Free resources survive an upgrade to
+  pay-as-you-go, but an account that lapses entirely takes the instance with it. Snapshot
+  the champion home periodically -- it is 9 MB.
 - The instance is `aarch64`, the same architecture as Apple Silicon, and checkpoints are
   plain torch state dicts -- they move between the two unchanged.
 

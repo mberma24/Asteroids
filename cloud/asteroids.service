@@ -1,0 +1,23 @@
+# Install with:
+#   sudo cp cloud/asteroids.service /etc/systemd/system/
+#   sudo systemctl enable --now asteroids
+#
+# Restart=always is what makes this survive reboots, Oracle maintenance, and an exhausted
+# episode budget. Nice=5 keeps the box responsive over SSH while all four cores are busy.
+[Unit]
+Description=Asteroids PPO training
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Asteroids
+ExecStart=/home/ubuntu/Asteroids/cloud/train-forever.sh
+Restart=always
+RestartSec=30
+Nice=5
+StandardOutput=append:/home/ubuntu/Asteroids/cloud-train.log
+StandardError=append:/home/ubuntu/Asteroids/cloud-train.log
+
+[Install]
+WantedBy=multi-user.target
