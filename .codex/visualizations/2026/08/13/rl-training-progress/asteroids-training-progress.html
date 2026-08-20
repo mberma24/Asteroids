@@ -1,0 +1,120 @@
+<div id="asteroids-training-progress">
+  <style>
+    #asteroids-training-progress { color: var(--foreground); width: 100%; }
+    #asteroids-training-progress .chart-wrap { position: relative; width: 100%; }
+    #asteroids-training-progress .training-chart { display: block; width: 100%; height: auto; overflow: visible; }
+    #asteroids-training-progress .grid { stroke: var(--border); stroke-width: 1; }
+    #asteroids-training-progress .axis-text { fill: var(--muted-foreground); font-size: 11px; }
+    #asteroids-training-progress .facet-title { fill: var(--foreground); font-size: 13px; font-weight: 500; }
+    #asteroids-training-progress .raw-line { fill: none; stroke: var(--viz-series-2); stroke-width: 1.5; opacity: .5; }
+    #asteroids-training-progress .trend-line { fill: none; stroke: var(--viz-series-1); stroke-width: 3; }
+    #asteroids-training-progress .point { fill: var(--viz-series-2); opacity: .68; }
+    #asteroids-training-progress .trend-point { fill: var(--viz-series-1); }
+    #asteroids-training-progress .checkpoint { stroke: var(--muted-foreground); stroke-width: 1; stroke-dasharray: 4 4; opacity: .65; }
+    #asteroids-training-progress .checkpoint-label { fill: var(--muted-foreground); font-size: 11px; }
+    #asteroids-training-progress .end-label { fill: var(--foreground); font-size: 11px; font-weight: 500; }
+    #asteroids-training-progress .legend-line { display: inline-block; width: 24px; height: 3px; vertical-align: middle; background: var(--viz-series-1); margin-right: 5px; }
+    #asteroids-training-progress .legend-line.raw { height: 2px; background: var(--viz-series-2); opacity: .55; }
+    #asteroids-training-progress .legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted-foreground); margin: 0 0 8px 58px; }
+    #asteroids-training-progress .tooltip { position: absolute; pointer-events: none; visibility: hidden; z-index: 2; }
+    #asteroids-training-progress .tooltip.is-visible { visibility: visible; }
+    @media (max-width: 520px) {
+      #asteroids-training-progress .legend { margin-left: 42px; }
+      #asteroids-training-progress .axis-text, #asteroids-training-progress .checkpoint-label, #asteroids-training-progress .end-label { font-size: 10px; }
+    }
+  </style>
+  <div class="legend text-small" aria-hidden="true">
+    <span><span class="legend-line raw"></span>Episode</span>
+    <span><span class="legend-line"></span>5-episode rolling average</span>
+  </div>
+  <div class="chart-wrap">
+    <svg class="training-chart" viewBox="0 0 736 690" role="img" aria-labelledby="atp-title atp-desc">
+      <title id="atp-title">Asteroids MuZero training through episode 37</title>
+      <desc id="atp-desc">Four aligned plots show survival time, firing accuracy, asteroids destroyed, and training loss per episode, with five-episode rolling averages.</desc>
+    </svg>
+    <div class="tooltip text-small" role="status" aria-live="polite"></div>
+  </div>
+  <div class="sr-only" id="atp-fallback">There are 37 completed training episodes. Hover or focus a point for exact episode values.</div>
+  <script>
+    (() => {
+      const root = document.getElementById('asteroids-training-progress');
+      const svg = root.querySelector('.training-chart');
+      const tooltip = root.querySelector('.tooltip');
+      const NS = 'http://www.w3.org/2000/svg';
+      const data = [
+        [1,7.367,.1304,3,1.903],[2,9.6,.3429,12,1.842],[3,5.4,.1429,3,2.66],[4,4.683,.1053,2,3.14],[5,8.033,.1786,5,2.156],
+        [6,6.217,.2381,5,2.61],[7,12.633,.2667,12,3.298],[8,7.783,.2778,5,2.605],[9,4.667,.125,1,2.667],[10,5.1,.0667,1,2.635],
+        [11,13.433,.2632,10,1.689],[12,7.117,.0625,1,3.017],[13,6.65,.1667,3,3.053],[14,7.067,.1923,5,2.52],[15,4.317,0,0,2.656],
+        [16,9.717,.32,8,3.108],[17,13.833,.4783,22,3.521],[18,5.9,.25,4,2.823],[19,5.933,.0769,1,4.419],[20,5.767,.1111,1,3.579],
+        [21,4.85,0,0,2.392],[22,3.75,.0909,1,3.435],[23,5.383,.2222,2,2.515],[24,10.2,.3784,14,3.753],[25,7.917,0,0,3.106],
+        [26,11.067,.4091,9,3.043],[27,7.217,.2609,6,3.029],[28,7.483,.2381,5,2.558],[29,5.383,0,0,2.986],[30,4.067,.0909,1,2.359],
+        [31,9.05,.3214,9,2.187],[32,4.183,.2143,3,2.888],[33,8.317,.3043,7,2.868],[34,4.367,.2857,4,2.435],[35,5.7,.0588,1,2.532],
+        [36,7.633,.1818,4,2.593],[37,10.1,.2963,8,2.729]
+      ];
+      const facets = [
+        {index:1, title:'Survival time', min:0, max:15, ticks:[0,5,10,15], format:v=>v.toFixed(1)+' s'},
+        {index:2, title:'Firing accuracy', min:0, max:.5, ticks:[0,.25,.5], format:v=>(v*100).toFixed(1)+'%'},
+        {index:3, title:'Asteroids destroyed', min:0, max:24, ticks:[0,12,24], format:v=>v.toFixed(0)},
+        {index:4, title:'Training loss', min:0, max:4.8, ticks:[0,2,4], format:v=>v.toFixed(2)}
+      ];
+      const left = 58, right = 58, top = 10, facetHeight = 145, gap = 18, plotTopOffset = 24, plotHeight = 104;
+      const width = 736 - left - right;
+      const x = episode => left + (episode - 1) / (data.length - 1) * width;
+      const el = (name, attrs = {}, text = '') => {
+        const node = document.createElementNS(NS, name);
+        Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
+        if (text) node.textContent = text;
+        return node;
+      };
+      const movingAverage = index => data.map((row, i) => {
+        const values = data.slice(Math.max(0, i - 4), i + 1).map(item => item[index]);
+        return values.reduce((a,b) => a+b, 0) / values.length;
+      });
+      const pathFor = (values, y) => values.map((value, i) => `${i ? 'L' : 'M'}${x(data[i][0]).toFixed(1)},${y(value).toFixed(1)}`).join(' ');
+
+      facets.forEach((facet, facetIndex) => {
+        const baseTop = top + facetIndex * (facetHeight + gap);
+        const plotTop = baseTop + plotTopOffset;
+        const y = value => plotTop + plotHeight - (value - facet.min) / (facet.max - facet.min) * plotHeight;
+        svg.appendChild(el('text', {x:left, y:baseTop + 13, class:'facet-title'}, facet.title));
+        facet.ticks.forEach(tick => {
+          const yy = y(tick);
+          svg.appendChild(el('line', {x1:left, x2:left+width, y1:yy, y2:yy, class:'grid'}));
+          const label = facet.index === 2 ? Math.round(tick*100)+'%' : String(tick);
+          svg.appendChild(el('text', {x:left-9, y:yy+4, 'text-anchor':'end', class:'axis-text'}, label));
+        });
+        if (facetIndex === 0) {
+          svg.appendChild(el('line', {x1:x(10), x2:x(10), y1:plotTop, y2:plotTop+plotHeight, class:'checkpoint'}));
+          svg.appendChild(el('text', {x:x(10)+5, y:plotTop+12, class:'checkpoint-label'}, 'resume / 8 searches'));
+        }
+        const raw = data.map(row => row[facet.index]);
+        const rolling = movingAverage(facet.index);
+        svg.appendChild(el('path', {d:pathFor(raw,y), class:'raw-line'}));
+        svg.appendChild(el('path', {d:pathFor(rolling,y), class:'trend-line'}));
+        data.forEach(row => {
+          const point = el('circle', {cx:x(row[0]), cy:y(row[facet.index]), r:3.2, class:'point', role:'button', 'aria-label':`Episode ${row[0]}, ${facet.title}: ${facet.format(row[facet.index])}`});
+          const show = () => {
+            const box = root.querySelector('.chart-wrap').getBoundingClientRect();
+            const svgBox = svg.getBoundingClientRect();
+            const px = (x(row[0]) / 736) * svgBox.width;
+            const py = (y(row[facet.index]) / 690) * svgBox.height;
+            tooltip.textContent = `Episode ${row[0]} · ${facet.title}: ${facet.format(row[facet.index])}`;
+            tooltip.classList.add('is-visible');
+            const tw = tooltip.offsetWidth;
+            tooltip.style.left = `${Math.max(4, Math.min(box.width - tw - 4, px - tw/2))}px`;
+            tooltip.style.top = `${Math.max(4, py - tooltip.offsetHeight - 10)}px`;
+          };
+          point.addEventListener('mouseenter', show);
+          point.addEventListener('mouseleave', () => tooltip.classList.remove('is-visible'));
+          svg.appendChild(point);
+        });
+        const last = rolling[rolling.length-1];
+        svg.appendChild(el('circle', {cx:x(37), cy:y(last), r:4, class:'trend-point'}));
+        svg.appendChild(el('text', {x:x(37)+8, y:y(last)+4, class:'end-label'}, facet.format(last)));
+      });
+      const axisY = top + 3*(facetHeight+gap) + plotTopOffset + plotHeight;
+      [1,10,20,30,37].forEach(episode => svg.appendChild(el('text', {x:x(episode), y:axisY+19, 'text-anchor':'middle', class:'axis-text'}, String(episode))));
+      svg.appendChild(el('text', {x:left+width/2, y:axisY+38, 'text-anchor':'middle', class:'axis-text'}, 'Training episode'));
+    })();
+  </script>
+</div>

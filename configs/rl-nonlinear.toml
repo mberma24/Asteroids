@@ -1,0 +1,51 @@
+# Rounds 29-48: extend the mastered foundation without modifying its task manifest.
+# Every spawned rock samples one of all eleven nonlinear trajectory types. Each numeric knob
+# advances by a small fixed step per round so difficulty remains directly controllable.
+[curriculum]
+extends = "rl-curriculum.toml"
+
+[progression]
+rounds = 20
+name_prefix = "nonlinear-round"
+composition_every = 2
+compositions = [
+  ["large", "large", "large"],
+  ["large", "large", "large", "large"],
+  ["large", "large", "large", "large", "large"],
+  ["large", "large", "large", "large", "large", "large"],
+  ["large", "large", "large", "large", "large", "large", "large"],
+  ["large", "large", "large", "large", "large", "large", "large", "large"],
+  ["large", "large", "large", "large", "large", "large", "large", "large", "large"],
+  ["large", "large", "large", "large", "large", "large", "large", "large", "large", "large"],
+  ["large", "large", "large", "large", "large", "large", "large", "large", "large", "large", "large"],
+]
+target_waves = 1
+patterns = [
+  "sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change",
+  "serpentine", "corkscrew", "figure_eight", "spiral", "brownian",
+]
+movement_enabled = true
+ship_invulnerable = false
+
+# Round 29 exactly matches round 28's forward speed, amplitude, and period envelope.
+# Round 48 reaches 49-64 forward speed, 82-145 amplitude, and 2.62-3.74s periods.
+min_speed_start = 30.0
+min_speed_step = 1.0
+max_speed_start = 45.0
+max_speed_step = 1.0
+amplitude_min_start = 25.0
+amplitude_min_step = 3.0
+amplitude_max_start = 50.0
+amplitude_max_step = 5.0
+wavelength_min_start = 3.0
+wavelength_min_step = -0.02
+wavelength_max_start = 4.5
+wavelength_max_step = -0.04
+
+# Limits grow with the required split-chain hits so later rounds remain learnable.
+max_seconds_start = 90.0
+max_seconds_step = 6.0
+no_hit_seconds_start = 20.0
+no_hit_seconds_step = 1.5
+promotion_accuracy = 0.05
+miss_penalty = 0.03

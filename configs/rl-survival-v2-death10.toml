@@ -1,0 +1,6 @@
+# Reward ablation only. Do not compare it to baseline without matching seeds and budget.
+[curriculum]
+extends = "rl-survival-v2.toml"
+
+[reward]
+death_penalty = 10.0

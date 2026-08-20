@@ -1,0 +1,58 @@
+# Survival ladder, top tier: mixed asteroid sizes, beyond everything below it.
+#
+# `asteroid_size = "mixed"` lets every spawn roll its own size, so a round contains lone
+# smalls that vanish when shot alongside larges that break into six more. That is the honest
+# hardest axis: a smalls-only tier would be *easier* than the tier before it, since a small
+# is the least dangerous size per rock and costs one bullet instead of seven.
+#
+# This file is the entry point for the whole ladder -- ninety rounds, thirty seconds each.
+# Loading it pulls in every tier below through `extends`:
+#
+#     small (1-10) -> medium (11-20) -> large (21-32) -> curves (33-46)
+#       -> full (47-76) -> mixed (77-90)
+[curriculum]
+extends = "rl-survival-full.toml"
+
+[progression]
+rounds = 14
+name_prefix = "mixed-round"
+survival = true
+asteroid_size = "mixed"
+patterns = [
+  "sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change",
+  "serpentine", "corkscrew", "figure_eight", "spiral", "brownian",
+]
+# Eleven curves plus a straight line is twelve equally likely options.
+linear_probability = 0.0833
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 100.0
+min_speed_step = 2.0
+max_speed_start = 158.0
+max_speed_step = 2.923
+amplitude_min_start = 12.0
+amplitude_min_step = 0.0
+amplitude_max_start = 130.0
+amplitude_max_step = 3.077
+wavelength_min_start = 1.8
+wavelength_min_step = -0.0269
+wavelength_max_start = 2.9
+wavelength_max_step = -0.0423
+# Below about 0.7s the field simply saturates against the 26-asteroid cap and the knob stops
+# meaning anything, so the last of the difficulty is spent on speed and spread instead.
+spawn_interval_start = 0.9
+spawn_interval_step = -0.01154
+spawn_spread_start = 45.0
+spawn_spread_step = -1.615
+initial_asteroids_start = 16.0
+initial_asteroids_step = 0.30769
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02

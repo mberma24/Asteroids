@@ -1,0 +1,52 @@
+# Curriculum preset: identical to rl.toml but with an in-episode difficulty ramp.
+[arena]
+width = 900
+height = 900
+fps = 60
+
+[ship]
+mobile = false
+friendly_collisions = "off"
+radius = 14.0
+acceleration = 220.0
+drag = 0.35
+max_speed = 320.0
+turn_speed = 5.0
+fire_cooldown = 0.24
+
+[asteroid]
+# Difficulty ramps within every episode: easy at t=0, reaching these values at
+# ramp_seconds. Survival time then measures how far up the ramp the agent climbed,
+# and skill is worth far more reward than at a constant hard setting.
+spawn_interval = 1.25
+active_cap = 32
+spawn_interval_start = 4.0
+active_cap_start = 6
+min_speed_start = 40.0
+max_speed_start = 70.0
+amplitude_max_start = 60.0
+ramp_seconds = 60.0
+spawn_size = 3
+min_speed = 75.0
+max_speed = 145.0
+motion_mode = "pool"
+specific_pattern = "sine"
+pattern_pool = ["sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change", "serpentine", "corkscrew", "figure_eight", "spiral"]
+amplitude_min = 60.0
+amplitude_max = 150.0
+wavelength_min = 1.7
+wavelength_max = 4.5
+
+[objective]
+protect = false
+object_health = 10
+object_radius = 28.0
+
+[projectile]
+speed = 540.0
+lifetime = 1.45
+radius = 3.0
+
+[[ships]]
+id = "agent"
+controller = "random"

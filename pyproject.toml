@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asteroid-survival"
+version = "0.1.0"
+description = "Deterministic multi-ship Asteroids survival environment"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["pygame-ce>=2.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+rl = [
+    "flax>=0.10",
+    "jax>=0.5",
+    "mctx>=0.0.6",
+    "numpy>=2.0",
+    "optax>=0.2",
+]
+ppo = [
+    "gymnasium>=1.0,<2",
+    "numpy>=2.0",
+    "sb3-contrib>=2.7,<3",
+    "stable-baselines3>=2.7,<3",
+    "torch>=2.6",
+]
+
+[project.scripts]
+asteroid-survival = "asteroid_survival.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,48 @@
+# Survival ladder, tier two: splitting, introduced a quarter at a time.
+#
+# Three rocks in four are still small and vanish when shot; the fourth is a medium that
+# breaks into two. That is the gentlest possible introduction of the mechanic, and it exists
+# because switching every rock to medium at once was a cliff -- the trained policy dropped
+# from 83% to 67% across the join and a run stalled there for 29,000 episodes.
+#
+# Density is unchanged from the small tier. The mixture is what makes this easier, not a
+# thinner field, so the round is no more forgiving of standing still.
+[curriculum]
+extends = "rl-survival-small.toml"
+
+[progression]
+rounds = 6
+name_prefix = "bridge-round"
+survival = true
+asteroid_size = ["small", "small", "small", "medium"]
+patterns = []
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 30.0
+min_speed_step = 0.4
+max_speed_start = 44.0
+max_speed_step = 0.6
+amplitude_min_start = 0.0
+amplitude_min_step = 0.0
+amplitude_max_start = 0.0
+amplitude_max_step = 0.0
+wavelength_min_start = 3.4
+wavelength_min_step = 0.0
+wavelength_max_start = 5.2
+wavelength_max_step = 0.0
+spawn_interval_start = 1.9
+spawn_interval_step = -0.05000
+spawn_spread_start = 170.0
+spawn_spread_step = 0.0
+initial_asteroids_start = 8.0
+initial_asteroids_step = 0.00000
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02

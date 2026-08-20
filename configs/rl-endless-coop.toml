@@ -1,0 +1,57 @@
+# Co-operative tier of the survival ladder: the curved rounds again, two ships at once.
+#
+# Both ships run the same policy. Bumping into each other kills both, and a shot that lands
+# on a teammate kills it, so the round is no longer only about dodging asteroids -- the
+# policy has to share an arena with a copy of itself that is trying to do exactly what it is.
+#
+# Rounds 1-90 are inherited unchanged and stay in the retention set, so solo skill is not
+# traded away for co-operation. Rounds 91-120 repeat the curved tier with two ships --
+# deliberately that tier and not the hardest one: when a new axis is introduced, every
+# other axis resets to a level already mastered, the way the arcade curriculum does it.
+# A third tier is another file extending this one with `ships = 3`.
+[curriculum]
+extends = "rl-endless.toml"
+
+[progression]
+rounds = 30
+name_prefix = "coop2-round"
+survival = true
+ships = 2
+patterns = [
+  "sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change",
+  "serpentine", "corkscrew", "figure_eight", "spiral", "brownian",
+]
+# Eleven curves plus a straight line is twelve equally likely options.
+linear_probability = 0.0833
+movement_enabled = true
+ship_invulnerable = false
+
+# The same envelope as the solo ladder, so a round number means the same asteroid field in
+# both tiers and the only new variable is the second ship.
+min_speed_start = 46.0
+min_speed_step = 1.862
+max_speed_start = 70.0
+max_speed_step = 3.034
+amplitude_min_start = 12.0
+amplitude_min_step = 0.0
+amplitude_max_start = 34.0
+amplitude_max_step = 3.310
+wavelength_min_start = 3.4
+wavelength_min_step = -0.0552
+wavelength_max_start = 5.2
+wavelength_max_step = -0.0793
+spawn_interval_start = 2.05
+spawn_interval_step = -0.0293
+spawn_spread_start = 152.0
+spawn_spread_step = -3.690
+initial_asteroids_start = 9.0
+initial_asteroids_step = 0.172
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02

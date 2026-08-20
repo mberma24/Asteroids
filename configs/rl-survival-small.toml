@@ -1,0 +1,108 @@
+# Survival ladder, tier one: small asteroids, straight lines, thirty-second rounds.
+#
+# The whole ladder is built the way the arcade curriculum is: introduce one thing at a time,
+# at the easiest setting, then climb. Size comes first because a small rock does not split --
+# shoot it and it is gone -- so an early round never becomes a crowd. Medium rocks split into
+# two smalls, large into two mediums and then four smalls.
+#
+# Rounds are thirty seconds. That is only a cost bound, not the objective: the point is to
+# survive as long as possible, and a shorter round simply buys twice as many rungs.
+#
+# Two things about a thirty-second round that decided the numbers here:
+#
+#  * A do-nothing policy is much harder to defeat than at sixty seconds, because the field
+#    has less time to fill. Both `initial_asteroids` and a tight `spawn_interval` fix it;
+#    the balance between them matters, because a large opening burst front-loads all the
+#    danger into the first seconds while a fast refill spreads it across the round. Measured
+#    on a trained policy: 12 rocks on a 2.6s clock scored 71%, 8 on a 1.8s clock scored 81%,
+#    at the same do-nothing rate. `spawn_spread` fixes nothing here, because
+#    `heading_mode = "aimed"` points rocks at the arena centre rather than at the ship, so a
+#    narrow spread is dodged by simply not being in the middle. Spread therefore keeps its
+#    monotone wide-to-narrow envelope across all ninety rounds and is never spent here.
+#  * Large rocks are the *most* dangerous size to an idle ship, not the least, because their
+#    radius is three times a small one's. Size is a gentle axis for a policy that plays, not
+#    for one that stands still.
+[curriculum]
+base_config = "rl-arcade.toml"
+retention_sample = 10
+# A round is half as long as it used to be, and a shorter round is markedly easier to
+# survive: measured on the greedy baseline, the same round reads 9-19 points higher at
+# thirty seconds than at sixty in the region where the gate actually bites (78% -> 88% on
+# round 26, 66% -> 84% on round 32), and up to 47 points higher on the hardest rounds. An
+# 80% gate at thirty seconds is therefore a much weaker bar than the 80% it replaced.
+#
+# 90% was tried, appeared too strict (117 evaluations on the old round 11 cleared it zero
+# times), and was reinstated once the real cause was found: the hit rewards were paying more
+# for a fragment than for the rock that produced it, so the policy was manufacturing its own
+# threats. The gate was never the problem.
+#
+# Noise is not the constraint here. At 64 evaluation episodes a 90% gate needs a true
+# completion of 91.4% to promote reliably within a four-evaluation window -- 1.4 points of
+# margin, against 2.6 at an 80% gate. The 32-episode noise trap that once pinned a run does
+# not apply.
+promotion_completion = 0.90
+
+[reward]
+# Survival dominant. Staying alive is the objective; hits are meaningful shaping, because
+# the field fills until it is unsurvivable and clearing it is how breathing room is won.
+# `active_time_penalty` and `timeout_penalty` are zero: one charges for staying alive, the
+# other for reaching the decision limit, and both are the exact opposite of the objective.
+survival_bonus = 0.10
+round_clear = 10.0
+death_penalty = 5.0
+# Split-neutral, and ordered by danger. A rock is worth exactly what its fragments are worth
+# together -- 0.6 for a large, the two mediums it becomes are 0.3 each -- so breaking one is
+# never a way to earn more.
+#
+# The old ordering was inverted (large 0.1, medium 0.25, small 0.5), inherited from the wave
+# curriculum where clearing a wave means destroying everything and the fiddly smalls deserve
+# the most. In a survival round it was an instruction to manufacture threats: shooting a
+# medium paid 0.25 and produced two smalls worth 1.0. The policy learned exactly that, and
+# died surrounded by its own debris -- 43.7 kills a round at 0.50 accuracy on round 11,
+# against 18.7 at 0.19 on round 10, and twice the death rate.
+large = 0.6
+medium = 0.3
+small = 0.15
+miss_penalty = 0.02
+accuracy = 0.0
+wave_clear = 0.0
+fast_clear = 0.0
+active_time_penalty = 0.0
+timeout_penalty = 0.0
+
+[progression]
+rounds = 10
+name_prefix = "small-round"
+survival = true
+asteroid_size = "small"
+patterns = []
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 26.0
+min_speed_step = 0.444
+max_speed_start = 38.0
+max_speed_step = 0.667
+amplitude_min_start = 0.0
+amplitude_min_step = 0.0
+amplitude_max_start = 0.0
+amplitude_max_step = 0.0
+wavelength_min_start = 3.4
+wavelength_min_step = 0.0
+wavelength_max_start = 5.2
+wavelength_max_step = 0.0
+spawn_interval_start = 2.0
+spawn_interval_step = -0.03333
+spawn_spread_start = 170.0
+spawn_spread_step = 0.0
+initial_asteroids_start = 8.0
+initial_asteroids_step = 0.00000
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02

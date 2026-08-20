@@ -1,0 +1,24 @@
+[ship]
+mobile = true
+friendly_collisions = "off"
+
+[asteroid]
+motion_mode = "pool"
+pattern_pool = ["sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change", "serpentine", "corkscrew", "figure_eight", "spiral"]
+spawn_interval = 1.25
+active_cap = 32
+
+[objective]
+protect = true
+object_health = 10
+object_radius = 28.0
+
+[[ships]]
+id = "alpha"
+controller = "human"
+input_profile = "keyboard_1"
+
+[[ships]]
+id = "beta"
+controller = "heuristic"
+

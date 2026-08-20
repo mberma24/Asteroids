@@ -1,0 +1,49 @@
+# Survival ladder, tier two: medium asteroids. Each one now splits into two smalls, so a
+# round can become crowded for the first time.
+#
+# Every rock is now a medium. The step from the bridge tier is only "three in four become
+# mediums too", because the bridge already taught what a split is.
+#
+# The bridge tier before this one has already introduced splitting at one rock in four, so
+# no density easing is needed here: the clock simply continues from where the bridge left it.
+[curriculum]
+extends = "rl-survival-bridge.toml"
+
+[progression]
+rounds = 10
+name_prefix = "medium-round"
+survival = true
+asteroid_size = "medium"
+patterns = []
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 32.0
+min_speed_step = 0.222
+max_speed_start = 47.0
+max_speed_step = 0.333
+amplitude_min_start = 0.0
+amplitude_min_step = 0.0
+amplitude_max_start = 0.0
+amplitude_max_step = 0.0
+wavelength_min_start = 3.4
+wavelength_min_step = 0.0
+wavelength_max_start = 5.2
+wavelength_max_step = 0.0
+spawn_interval_start = 1.65
+spawn_interval_step = -0.01667
+spawn_spread_start = 170.0
+spawn_spread_step = -0.222
+# The starting count stays where the tiers below left it: cutting it would relax the
+# anti-idle guard without helping a shooter, since an idle ship never causes a split.
+initial_asteroids_start = 8.0
+initial_asteroids_step = 0.11111
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02

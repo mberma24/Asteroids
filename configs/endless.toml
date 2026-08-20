@@ -1,0 +1,85 @@
+# Endless mode: one run that never ends on its own, only when you are hit.
+#
+# Every asteroid uses one of the eleven nonlinear trajectory patterns. Difficulty starts
+# deliberately gentle -- a handful of slow, lazily curving rocks scattered wide -- and
+# steps up hard every twenty seconds, reaching the target values below at one minute.
+# After that the run keeps tightening forever through `endless_pressure_per_minute`, so no
+# policy survives indefinitely and runs can always be ranked by how long they lasted.
+#
+# The pace is set by what an episode costs to train on: thirty seconds in is already
+# demanding and a minute in is punishing, so a run resolves in seconds of wall clock rather
+# than minutes. Difficulty holds still between steps, which keeps the observation
+# distribution stationary within a step instead of drifting under the learner every frame.
+[arena]
+width = 900
+height = 900
+fps = 60
+
+[ship]
+mobile = true
+friendly_collisions = "off"
+radius = 14.0
+acceleration = 180.0
+drag = 0.15
+max_speed = 240.0
+turn_speed = 5.0
+fire_cooldown = 0.24
+
+[asteroid]
+spawn_mode = "interval"
+spawn_size = 3
+motion_mode = "pool"
+linear_probability = 0.0
+pattern_pool = [
+  "sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change",
+  "serpentine", "corkscrew", "figure_eight", "spiral", "brownian",
+]
+heading_mode = "aimed"
+medium_speed_multiplier = 1.15
+small_speed_multiplier = 1.35
+amplitude_min = 12.0
+
+# Four twenty-second tiers from the opening values to the targets, then open-ended growth
+# that keeps arriving in twenty-second tiers.
+#
+# `ramp_seconds` is 50 rather than 60 because difficulty is evaluated at the tier boundary
+# below it, so the ramp is sampled at 0s, 20s, and 40s -- progress 0, 0.4, 0.8 -- and tier 4
+# at 60s clamps to the full target. That spaces four tiers evenly across the first minute.
+ramp_seconds = 50.0
+ramp_step_seconds = 20.0
+endless_pressure_per_minute = 0.35
+
+# tier 1 (0-20s): a rock every 4.3 seconds, eight on screen at once, still slow and only
+# loosely curving, thrown wide of the centre so most of them drift harmlessly past.
+spawn_interval_start = 4.31
+active_cap_start = 8
+min_speed_start = 39.17
+max_speed_start = 60.0
+amplitude_max_start = 50.0
+wavelength_min_start = 3.1
+wavelength_max_start = 4.77
+spawn_spread_start = 130.0
+
+# tier 4 (from 60s): a rock every 0.85s, a crowded field, over three times the speed, five
+# times the swing, and headings that aim near you instead of scattering.
+spawn_interval = 0.85
+active_cap = 26
+min_speed = 95.0
+max_speed = 150.0
+amplitude_max = 150.0
+wavelength_min = 1.6
+wavelength_max = 2.6
+spawn_spread = 30.0
+
+[objective]
+protect = false
+
+[projectile]
+speed = 540.0
+lifetime = 1.45
+radius = 3.0
+
+[[ships]]
+id = "you"
+controller = "human"
+input_profile = "keyboard_1"

@@ -1,0 +1,411 @@
+[curriculum]
+base_config = "configs/rl-arcade.toml"
+# 32 episodes give a standard error near 8 points at the completion rates that matter, so
+# readings swing +-17 points on noise and the promotion gate ends up waiting on a lucky
+# draw. 96 halves that, at the cost of 64 extra episodes per evaluation.
+evaluation_episodes = 96
+retention_evaluation_episodes = 8
+# Score ten prior stages per evaluation, rotating. Re-scoring all of them was
+# two thirds of every evaluation and half of the run's total decisions.
+retention_sample = 10
+promotion_completion = 0.80
+retention_completion = 0.75
+# Accuracy is only an anti-spam floor. Completion and clear speed decide mastery.
+promotion_accuracy = 0.05
+promotion_streak = 2
+promotion_window = 4
+current_stage_probability = 0.75
+
+[reward]
+# Every hit pays the same so partial progress is immediately worth something; with graded
+# values a first large-rock hit paid 0.2 while an exploratory miss cost 0.28, which made
+# playing at the agent's own accuracy worse than idling out the clock.
+large = 1.0
+medium = 1.0
+small = 1.0
+wave_clear = 5.0
+# Speed dominates the terminal bonus; accuracy remains a smaller secondary bonus.
+fast_clear = 6.0
+accuracy = 2.0
+# Dense but deliberately tiny feedback for a wasted shot. At +1 per hit this makes
+# shooting break even around 2.9% accuracy, while the 5% gate still rejects blind spam.
+miss_penalty = 0.03
+timeout_penalty = 8.0
+death_penalty = 5.0
+active_time_penalty = 0.02
+par_time_per_wave = 45.0
+aim_progress = 0.15
+
+# Stationary size ladder. Small costs one total hit, medium costs three after splitting,
+# and large costs seven. Total required hits rise smoothly before any new mechanic appears.
+# Dry-spell windows are set from measurement, not by hand: the longest gap between
+# kills the greedy baseline actually needs on each stage, over sixteen seeds, with
+# 60% headroom and a 20s floor. Several were far too tight even before fragments
+# were sped up -- stage 13 needed 33s and allowed 17 -- so competent play was being
+# cut off as though it had stalled.
+[[stages]]
+name = "stationary-1-small"
+composition = ["small"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 30.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-2-small"
+composition = ["small", "small"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 30.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-1-medium"
+composition = ["medium"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 30.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-1-medium-1-small"
+composition = ["medium", "small"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 30.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-2-medium"
+composition = ["medium", "medium"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 28.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-2-medium-1-small"
+composition = ["medium", "medium", "small"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 32.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-1-large"
+composition = ["large"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 32.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-1-large-1-small"
+composition = ["large", "small"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 36.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-1-large-1-medium"
+composition = ["large", "medium"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 42.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+[[stages]]
+name = "stationary-2-large"
+composition = ["large", "large"]
+min_speed = 0.0
+max_speed = 0.0
+linear_probability = 1.0
+max_seconds = 55.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+miss_penalty = 0.03
+
+# Next, add slow linear motion, but collisions pass through the ship.
+[[stages]]
+name = "safe-linear-1-large"
+composition = ["large"]
+min_speed = 20.0
+max_speed = 30.0
+linear_probability = 1.0
+ship_invulnerable = true
+max_seconds = 25.0
+no_hit_seconds = 34.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "safe-linear-2-large"
+composition = ["large", "large"]
+min_speed = 20.0
+max_speed = 30.0
+linear_probability = 1.0
+ship_invulnerable = true
+max_seconds = 50.0
+no_hit_seconds = 30.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "safe-linear-3-large"
+composition = ["large", "large", "large"]
+min_speed = 20.0
+max_speed = 30.0
+linear_probability = 1.0
+ship_invulnerable = true
+max_seconds = 65.0
+no_hit_seconds = 54.0
+promotion_accuracy = 0.05
+
+# Rounds 7-9: same linear tasks, now collisions can destroy the ship.
+[[stages]]
+name = "linear-1-large"
+composition = ["large"]
+min_speed = 20.0
+max_speed = 30.0
+linear_probability = 1.0
+max_seconds = 25.0
+no_hit_seconds = 34.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "linear-2-large"
+composition = ["large", "large"]
+min_speed = 20.0
+max_speed = 30.0
+linear_probability = 1.0
+max_seconds = 50.0
+no_hit_seconds = 30.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "linear-3-large"
+composition = ["large", "large", "large"]
+min_speed = 20.0
+max_speed = 30.0
+linear_probability = 1.0
+max_seconds = 65.0
+no_hit_seconds = 54.0
+promotion_accuracy = 0.05
+
+# Rounds 10-12: first nonlinear pattern, with rotation-only control.
+[[stages]]
+name = "sine-1-large"
+composition = ["large"]
+min_speed = 25.0
+max_speed = 35.0
+linear_probability = 0.0
+patterns = ["sine"]
+amplitude_min = 20.0
+amplitude_max = 40.0
+wavelength_min = 4.0
+wavelength_max = 5.0
+max_seconds = 40.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "sine-2-large"
+composition = ["large", "large"]
+min_speed = 25.0
+max_speed = 35.0
+linear_probability = 0.0
+patterns = ["sine"]
+amplitude_min = 20.0
+amplitude_max = 40.0
+wavelength_min = 4.0
+wavelength_max = 5.0
+max_seconds = 65.0
+no_hit_seconds = 22.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "sine-3-large"
+composition = ["large", "large", "large"]
+min_speed = 25.0
+max_speed = 35.0
+linear_probability = 0.0
+patterns = ["sine"]
+amplitude_min = 20.0
+amplitude_max = 40.0
+wavelength_min = 4.0
+wavelength_max = 5.0
+max_seconds = 85.0
+no_hit_seconds = 21.0
+promotion_accuracy = 0.05
+
+# Rounds 13-15 repeat sine while adding ship movement as the only new mechanic.
+[[stages]]
+name = "mobile-sine-1-large"
+composition = ["large"]
+min_speed = 25.0
+max_speed = 35.0
+linear_probability = 0.0
+patterns = ["sine"]
+amplitude_min = 20.0
+amplitude_max = 40.0
+wavelength_min = 4.0
+wavelength_max = 5.0
+movement_enabled = true
+max_seconds = 40.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "mobile-sine-2-large"
+composition = ["large", "large"]
+min_speed = 25.0
+max_speed = 35.0
+linear_probability = 0.0
+patterns = ["sine"]
+amplitude_min = 20.0
+amplitude_max = 40.0
+wavelength_min = 4.0
+wavelength_max = 5.0
+movement_enabled = true
+max_seconds = 65.0
+no_hit_seconds = 22.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "mobile-sine-3-large"
+composition = ["large", "large", "large"]
+min_speed = 25.0
+max_speed = 35.0
+linear_probability = 0.0
+patterns = ["sine"]
+amplitude_min = 20.0
+amplitude_max = 40.0
+wavelength_min = 4.0
+wavelength_max = 5.0
+movement_enabled = true
+max_seconds = 85.0
+no_hit_seconds = 21.0
+promotion_accuracy = 0.05
+
+# Each later three-round block introduces exactly one new nonlinear pattern; no linear mix.
+[[stages]]
+name = "mobile-arc-1-large"
+composition = ["large"]
+min_speed = 30.0
+max_speed = 40.0
+linear_probability = 0.0
+patterns = ["arc"]
+amplitude_min = 25.0
+amplitude_max = 45.0
+wavelength_min = 3.5
+wavelength_max = 5.0
+movement_enabled = true
+max_seconds = 45.0
+no_hit_seconds = 26.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "mobile-arc-2-large"
+composition = ["large", "large"]
+min_speed = 30.0
+max_speed = 40.0
+linear_probability = 0.0
+patterns = ["arc"]
+amplitude_min = 25.0
+amplitude_max = 45.0
+wavelength_min = 3.5
+wavelength_max = 5.0
+movement_enabled = true
+max_seconds = 100.0
+no_hit_seconds = 25.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "mobile-arc-3-large"
+composition = ["large", "large", "large"]
+min_speed = 30.0
+max_speed = 40.0
+linear_probability = 0.0
+patterns = ["arc"]
+amplitude_min = 25.0
+amplitude_max = 45.0
+wavelength_min = 3.5
+wavelength_max = 5.0
+movement_enabled = true
+max_seconds = 100.0
+no_hit_seconds = 93.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "mobile-s-curve-1-large"
+composition = ["large"]
+min_speed = 30.0
+max_speed = 45.0
+linear_probability = 0.0
+patterns = ["s_curve"]
+amplitude_min = 25.0
+amplitude_max = 50.0
+wavelength_min = 3.0
+wavelength_max = 4.5
+movement_enabled = true
+max_seconds = 55.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "mobile-s-curve-2-large"
+composition = ["large", "large"]
+min_speed = 30.0
+max_speed = 45.0
+linear_probability = 0.0
+patterns = ["s_curve"]
+amplitude_min = 25.0
+amplitude_max = 50.0
+wavelength_min = 3.0
+wavelength_max = 4.5
+movement_enabled = true
+max_seconds = 90.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05
+
+[[stages]]
+name = "mobile-s-curve-3-large"
+composition = ["large", "large", "large"]
+min_speed = 30.0
+max_speed = 45.0
+linear_probability = 0.0
+patterns = ["s_curve"]
+amplitude_min = 25.0
+amplitude_max = 50.0
+wavelength_min = 3.0
+wavelength_max = 4.5
+movement_enabled = true
+max_seconds = 85.0
+no_hit_seconds = 20.0
+promotion_accuracy = 0.05

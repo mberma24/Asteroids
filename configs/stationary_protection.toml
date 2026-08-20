@@ -1,0 +1,24 @@
+[ship]
+mobile = false
+friendly_collisions = "off"
+
+[asteroid]
+motion_mode = "specific"
+specific_pattern = "serpentine"
+spawn_interval = 1.25
+active_cap = 32
+
+[objective]
+protect = true
+object_health = 10
+object_radius = 28.0
+
+[[ships]]
+id = "north"
+controller = "human"
+input_profile = "keyboard_1"
+
+[[ships]]
+id = "south"
+controller = "heuristic"
+

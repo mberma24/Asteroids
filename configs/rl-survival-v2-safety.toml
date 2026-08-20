@@ -1,0 +1,7 @@
+# Potential-based safety ablation. The signed delta telescopes, preventing turn-away/turn-back
+# reward farming; baseline v2 leaves this term at zero.
+[curriculum]
+extends = "rl-survival-v2.toml"
+
+[reward]
+safety_progress = 0.05

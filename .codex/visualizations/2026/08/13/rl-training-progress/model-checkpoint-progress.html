@@ -1,0 +1,74 @@
+<div id="model-checkpoint-progress">
+  <style>
+    #model-checkpoint-progress { width: 100%; color: var(--foreground); }
+    #model-checkpoint-progress .legend { display:flex; gap:16px; flex-wrap:wrap; margin:0 0 8px 55px; color:var(--muted-foreground); }
+    #model-checkpoint-progress .swatch { display:inline-block; width:22px; height:2px; margin-right:5px; vertical-align:middle; background:var(--viz-series-2); opacity:.45; }
+    #model-checkpoint-progress .swatch.trend { height:3px; background:var(--viz-series-1); opacity:1; }
+    #model-checkpoint-progress .wrap { position:relative; width:100%; }
+    #model-checkpoint-progress .chart { display:block; width:100%; height:auto; overflow:visible; }
+    #model-checkpoint-progress .grid { stroke:var(--border); stroke-width:1; }
+    #model-checkpoint-progress .axis { fill:var(--muted-foreground); font-size:11px; }
+    #model-checkpoint-progress .title { fill:var(--foreground); font-size:13px; font-weight:500; }
+    #model-checkpoint-progress .raw { fill:none; stroke:var(--viz-series-2); stroke-width:1.25; opacity:.38; }
+    #model-checkpoint-progress .trend { fill:none; stroke:var(--viz-series-1); stroke-width:3; }
+    #model-checkpoint-progress .dot { fill:var(--viz-series-2); opacity:.55; }
+    #model-checkpoint-progress .end { fill:var(--viz-series-1); }
+    #model-checkpoint-progress .end-label { fill:var(--foreground); font-size:11px; font-weight:500; }
+    #model-checkpoint-progress .phase { fill:var(--viz-series-3); opacity:.07; }
+    #model-checkpoint-progress .phase-line { stroke:var(--viz-series-3); stroke-width:1; stroke-dasharray:4 4; }
+    #model-checkpoint-progress .phase-label { fill:var(--muted-foreground); font-size:11px; }
+    #model-checkpoint-progress .tooltip { position:absolute; visibility:hidden; pointer-events:none; z-index:2; }
+    #model-checkpoint-progress .tooltip.show { visibility:visible; }
+    @media(max-width:520px){
+      #model-checkpoint-progress .legend { margin-left:40px; }
+      #model-checkpoint-progress .axis,#model-checkpoint-progress .phase-label,#model-checkpoint-progress .end-label { font-size:10px; }
+    }
+  </style>
+  <div class="legend text-small" aria-hidden="true">
+    <span><span class="swatch"></span>Training episode</span>
+    <span><span class="swatch trend"></span>10-episode average</span>
+  </div>
+  <div class="wrap">
+    <svg class="chart" viewBox="0 0 736 690" role="img" aria-labelledby="mcp-title mcp-desc">
+      <title id="mcp-title">MuZero checkpoint training progress through episode 115</title>
+      <desc id="mcp-desc">Four aligned time series compare survival, firing accuracy, asteroids destroyed, and training loss. Episode 39 marks the faster-turning environment and asteroid-hit reward.</desc>
+    </svg>
+    <div class="tooltip text-small" role="status" aria-live="polite"></div>
+  </div>
+  <script>
+    (() => {
+      const root=document.getElementById('model-checkpoint-progress');
+      const svg=root.querySelector('.chart');
+      const tooltip=root.querySelector('.tooltip');
+      const NS='http://www.w3.org/2000/svg';
+      const data=[[1,7.37,13,3,1.9],[2,9.6,34.3,12,1.84],[3,5.4,14.3,3,2.66],[4,4.68,10.5,2,3.14],[5,8.03,17.9,5,2.16],[6,6.22,23.8,5,2.61],[7,12.63,26.7,12,3.3],[8,7.78,27.8,5,2.6],[9,4.67,12.5,1,2.67],[10,5.1,6.7,1,2.64],[11,13.43,26.3,10,1.69],[12,7.12,6.3,1,3.02],[13,6.65,16.7,3,3.05],[14,7.07,19.2,5,2.52],[15,4.32,0,0,2.66],[16,9.72,32,8,3.11],[17,13.83,47.8,22,3.52],[18,5.9,25,4,2.82],[19,5.93,7.7,1,4.42],[20,5.77,11.1,1,3.58],[21,4.85,0,0,2.39],[22,3.75,9.1,1,3.43],[23,5.38,22.2,2,2.52],[24,10.2,37.8,14,3.75],[25,7.92,0,0,3.11],[26,11.07,40.9,9,3.04],[27,7.22,26.1,6,3.03],[28,7.48,23.8,5,2.56],[29,5.38,0,0,2.99],[30,4.07,9.1,1,2.36],[31,9.05,32.1,9,2.19],[32,4.18,21.4,3,2.89],[33,8.32,30.4,7,2.87],[34,4.37,28.6,4,2.43],[35,5.7,5.9,1,2.53],[36,7.63,18.2,4,2.59],[37,10.1,29.6,8,2.73],[38,9.1,35,7,2.9],[39,6.05,53.3,8,1.05],[40,5.07,28.6,4,1.38],[41,6.83,14.3,3,1.36],[42,5.77,14.3,2,1.35],[43,7.6,11.5,3,1.43],[44,4.45,6.3,1,1.79],[45,6,10.5,2,1.44],[46,7.38,21.4,6,1.67],[47,7.43,17.2,5,1.73],[48,8.18,22.6,7,1.74],[49,6.6,3.8,1,1.83],[50,4.32,26.7,4,1.95],[51,7.42,19,4,1.62],[52,9.25,12,3,1.59],[53,6.02,0,0,1.45],[54,14.6,41.5,17,1.88],[55,7.77,13,3,2.05],[56,7.17,23.5,4,1.69],[57,7.22,17.9,5,1.61],[58,6.27,12,3,1.7],[59,9.9,32.3,10,2.18],[60,8,19.4,6,1.38],[61,6.72,16.7,4,1.67],[62,8.7,25,7,2.89],[63,6.07,0,0,1.76],[64,5.77,31.3,5,1.75],[65,6.85,21.1,4,1.47],[66,9.48,14.8,4,1.71],[67,3.82,33.3,5,1.74],[68,9.8,25.7,9,1.97],[69,9.65,31,9,2.08],[70,10.98,34.2,13,2.97],[71,4.92,6.7,1,2.43],[72,5.75,0,0,2.42],[73,4.85,0,0,2.55],[74,5.83,11.8,2,1.8],[75,4.58,10.5,2,2.93],[76,12.8,35,14,3.18],[77,8.23,6.3,2,2.51],[78,7.15,3.7,1,2.58],[79,8.83,16.7,5,2.31],[80,6.22,33.3,8,2.66],[81,5.93,10,2,1.88],[82,7.32,16.7,4,2.23],[83,4.7,0,0,3.06],[84,8.6,32,8,2.65],[85,8.97,20,5,2.05],[86,7.33,13,3,2.29],[87,4.28,6.3,1,1.49],[88,4.48,0,0,1.9],[89,8.37,20.8,5,1.32],[90,10.57,41.7,15,3.28],[91,5.15,7.7,1,2.03],[92,8.93,35.3,12,2.19],[93,6.67,23.1,6,3.23],[94,6.33,22.7,5,3.55],[95,6.97,0,0,2.45],[96,6.6,28,7,2.48],[97,6.57,8,2,2.15],[98,5.33,30,6,3.65],[99,13.37,40.9,18,4.75],[100,7.78,13.3,4,4.13],[101,3.72,13.3,2,3.46],[102,8.67,17.2,5,2.29],[103,9.33,26.5,9,3.09],[104,6.58,4.2,1,2.6],[105,8.33,15.2,5,4.18],[106,10.47,26.5,9,2.18],[107,7.45,22.2,6,2.58],[108,10.83,23.7,9,2.52],[109,9.57,18.9,7,2.49],[110,6.95,10.7,3,2.07],[111,6.55,16,4,2.58],[112,5.9,0,0,2.96],[113,6.3,17.6,3,1.85],[114,6.52,45.8,11,2.97],[115,7.52,20,6,2.35]];
+      const facets=[
+        {i:1,name:'Survival time',min:0,max:16,ticks:[0,5,10,15],fmt:v=>v.toFixed(1)+' s'},
+        {i:2,name:'Firing accuracy',min:0,max:60,ticks:[0,20,40,60],fmt:v=>v.toFixed(1)+'%'},
+        {i:3,name:'Asteroids destroyed',min:0,max:24,ticks:[0,8,16,24],fmt:v=>v.toFixed(1)},
+        {i:4,name:'Training loss',min:0,max:5,ticks:[0,2.5,5],fmt:v=>v.toFixed(2)}
+      ];
+      const left=55,right=64,top=8,h=145,gap=17,offset=24,ph=104,w=736-left-right;
+      const x=e=>left+(e-1)/(data.length-1)*w;
+      const make=(tag,attrs={},text='')=>{const n=document.createElementNS(NS,tag);Object.entries(attrs).forEach(([k,v])=>n.setAttribute(k,v));if(text)n.textContent=text;return n;};
+      const rolling=i=>data.map((_,p)=>{const a=data.slice(Math.max(0,p-9),p+1).map(r=>r[i]);return a.reduce((s,v)=>s+v,0)/a.length;});
+      const path=(vals,y)=>vals.map((v,p)=>(p?'L':'M')+x(data[p][0]).toFixed(1)+','+y(v).toFixed(1)).join(' ');
+      facets.forEach((f,fi)=>{
+        const bt=top+fi*(h+gap),pt=bt+offset,y=v=>pt+ph-(v-f.min)/(f.max-f.min)*ph;
+        svg.appendChild(make('text',{x:left,y:bt+13,class:'title'},f.name));
+        svg.appendChild(make('rect',{x:x(38),y:pt,width:x(115)-x(38),height:ph,class:'phase'}));
+        svg.appendChild(make('line',{x1:x(38),x2:x(38),y1:pt,y2:pt+ph,class:'phase-line'}));
+        if(fi===0) svg.appendChild(make('text',{x:x(38)+5,y:pt+12,class:'phase-label'},'faster turn + hit reward'));
+        f.ticks.forEach(t=>{const yy=y(t);svg.appendChild(make('line',{x1:left,x2:left+w,y1:yy,y2:yy,class:'grid'}));svg.appendChild(make('text',{x:left-8,y:yy+4,'text-anchor':'end',class:'axis'},f.i===2?t+'%':t));});
+        const raw=data.map(r=>r[f.i]),avg=rolling(f.i);
+        svg.appendChild(make('path',{d:path(raw,y),class:'raw'}));
+        svg.appendChild(make('path',{d:path(avg,y),class:'trend'}));
+        data.forEach(r=>{const c=make('circle',{cx:x(r[0]),cy:y(r[f.i]),r:2.5,class:'dot','aria-label':`Episode ${r[0]}, ${f.name}: ${f.fmt(r[f.i])}`});c.addEventListener('mouseenter',()=>{const sb=svg.getBoundingClientRect(),wb=root.querySelector('.wrap').getBoundingClientRect(),px=x(r[0])/736*sb.width,py=y(r[f.i])/690*sb.height;tooltip.textContent=`Checkpoint ${r[0]} · ${f.name}: ${f.fmt(r[f.i])}`;tooltip.classList.add('show');const tw=tooltip.offsetWidth;tooltip.style.left=Math.max(4,Math.min(wb.width-tw-4,px-tw/2))+'px';tooltip.style.top=Math.max(4,py-tooltip.offsetHeight-9)+'px';});c.addEventListener('mouseleave',()=>tooltip.classList.remove('show'));svg.appendChild(c);});
+        const last=avg.at(-1);svg.appendChild(make('circle',{cx:x(115),cy:y(last),r:4,class:'end'}));svg.appendChild(make('text',{x:x(115)+7,y:y(last)+4,class:'end-label'},f.fmt(last)));
+      });
+      const ay=top+3*(h+gap)+offset+ph;
+      [1,20,40,60,80,100,115].forEach(e=>svg.appendChild(make('text',{x:x(e),y:ay+18,'text-anchor':'middle',class:'axis'},e)));
+      svg.appendChild(make('text',{x:left+w/2,y:ay+37,'text-anchor':'middle',class:'axis'},'Checkpoint / training episode'));
+    })();
+  </script>
+</div>

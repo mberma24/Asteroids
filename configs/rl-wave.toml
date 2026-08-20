@@ -1,0 +1,66 @@
+# Arcade-style wave spawning: a new wave arrives only once the field has been worn down,
+# and its asteroids trickle in rather than appearing all at once.
+#
+# Wave 1 releases 4 asteroids and each later wave adds 2, capped at 11, matching the
+# original game. What ramps with time is the threshold: early waves demand a nearly clear
+# screen, while later ones arrive while several rocks are still in play, so the field
+# crowds up the longer a run lasts. Speed and waviness ramp alongside it.
+[arena]
+width = 900
+height = 900
+fps = 60
+
+[ship]
+mobile = false
+friendly_collisions = "off"
+radius = 14.0
+acceleration = 220.0
+drag = 0.35
+max_speed = 320.0
+turn_speed = 5.0
+fire_cooldown = 0.24
+
+[asteroid]
+spawn_mode = "wave"
+wave_size = 4
+wave_growth = 2
+wave_size_max = 11
+wave_spawn_interval = 0.4
+wave_delay = 1.6
+wave_threshold_start = 0
+wave_threshold = 8
+ramp_seconds = 120.0
+
+active_cap = 32
+spawn_size = 3
+min_speed = 75.0
+max_speed = 145.0
+min_speed_start = 45.0
+max_speed_start = 80.0
+# Asteroids start scattered like the arcade game and are aimed progressively
+# closer to the ship as a run goes on, which is itself a difficulty ramp.
+spawn_spread_start = 170.0
+spawn_spread = 70.0
+
+motion_mode = "pool"
+specific_pattern = "sine"
+pattern_pool = ["sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change", "serpentine", "corkscrew", "figure_eight", "spiral"]
+amplitude_min = 40.0
+amplitude_max = 150.0
+amplitude_max_start = 55.0
+wavelength_min = 1.7
+wavelength_max = 4.5
+
+[objective]
+protect = false
+object_health = 10
+object_radius = 28.0
+
+[projectile]
+speed = 540.0
+lifetime = 1.45
+radius = 3.0
+
+[[ships]]
+id = "agent"
+controller = "random"

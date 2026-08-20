@@ -1,0 +1,146 @@
+# Survival v2 is intentionally separate from rl-endless.toml: old checkpoints keep their
+# exact task hash while this curriculum can expose curvature early and add observation v5.
+[curriculum]
+base_config = "rl-arcade.toml"
+retention_sample = 10
+promotion_completion = 0.90
+promotion_clear_rate = 0.80
+retention_completion = 0.75
+retention_floor = 0.50
+promotion_accuracy = 0.05
+promotion_streak = 2
+promotion_window = 4
+current_stage_probability = 0.65
+evaluation_episodes = 64
+evaluation_panels = 4
+test_evaluation_episodes = 128
+observation_version = 5
+
+[reward]
+survival_bonus = 0.10
+round_clear = 10.0
+death_penalty = 5.0
+large = 0.6
+medium = 0.3
+small = 0.15
+miss_penalty = 0.02
+accuracy = 0.0
+wave_clear = 0.0
+fast_clear = 0.0
+active_time_penalty = 0.0
+timeout_penalty = 0.0
+time_scaled_survival = true
+safety_progress = 0.0
+
+# Straight line is one trajectory among equals: every phase sets
+# linear_probability = 1/(len(patterns) + 1), so a rock is exactly as likely to fly
+# straight as to fly any single curve. A field of nothing but curves teaches the policy
+# to always expect a turn; over-weighting straight teaches the opposite.
+[progression]
+rounds = 96
+name_prefix = "survival-v2-round"
+survival = true
+patterns = []
+linear_probability = 1.0
+movement_enabled = true
+ship_invulnerable = false
+
+# Every physical knob moves a small amount on every round. Pattern phases below change the
+# distribution, but never turn these ramps backward.
+min_speed_start = 26.0
+min_speed_step = 1.05263
+max_speed_start = 38.0
+max_speed_step = 1.66316
+amplitude_min_start = 0.0
+amplitude_min_step = 0.12632
+amplitude_max_start = 0.0
+amplitude_max_step = 1.68421
+wavelength_min_start = 4.8
+wavelength_min_step = -0.03579
+wavelength_max_start = 6.0
+wavelength_max_step = -0.03789
+spawn_interval_start = 2.0
+spawn_interval_step = -0.01316
+spawn_spread_start = 170.0
+spawn_spread_step = -1.53684
+initial_asteroids_start = 8.0
+initial_asteroids_step = 0.12632
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+
+[[progression.phases]]
+until = 2
+patterns = []
+linear_probability = 1
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 6
+patterns = ["sine"]
+linear_probability = 0.5
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 10
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 12
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "small", "medium"]
+
+[[progression.phases]]
+until = 14
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "medium", "medium"]
+
+[[progression.phases]]
+until = 16
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "medium", "medium", "medium"]
+
+[[progression.phases]]
+until = 22
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change"]
+linear_probability = 0.142857
+asteroid_size = "medium"
+
+[[progression.phases]]
+until = 25
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "large"]
+
+[[progression.phases]]
+until = 28
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large", "large"]
+
+[[progression.phases]]
+until = 52
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "large"
+
+[[progression.phases]]
+until = 82
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["large", "large", "large", "medium"]
+
+[[progression.phases]]
+until = 96
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "mixed"

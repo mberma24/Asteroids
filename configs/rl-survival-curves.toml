@@ -1,0 +1,46 @@
+# Survival ladder, tier four: the first curves. The three patterns added are the smooth,
+# predictable ones -- a policy meets curvature before it meets anything erratic -- and a
+# straight line is simply one of the four equally likely options.
+[curriculum]
+extends = "rl-survival-large.toml"
+
+[progression]
+rounds = 14
+name_prefix = "curve-round"
+survival = true
+asteroid_size = "large"
+patterns = ["sine", "arc", "s_curve"]
+# Straight is not a special case, it is the twelfth trajectory. `linear_probability` is
+# therefore 1/(len(patterns) + 1) so that every option -- the three curves and a straight
+# line -- is equally likely. Three curves plus straight is four, so 0.25.
+linear_probability = 0.25
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 40.0
+min_speed_step = 0.462
+max_speed_start = 60.0
+max_speed_step = 0.769
+amplitude_min_start = 8.0
+amplitude_min_step = 0.308
+amplitude_max_start = 16.0
+amplitude_max_step = 1.385
+wavelength_min_start = 3.4
+wavelength_min_step = 0.0
+wavelength_max_start = 5.2
+wavelength_max_step = 0.0
+spawn_interval_start = 1.4
+spawn_interval_step = -0.00769
+spawn_spread_start = 160.0
+spawn_spread_step = -0.615
+initial_asteroids_start = 9.0
+initial_asteroids_step = 0.07692
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02
