@@ -16,15 +16,18 @@ EPISODES="${EPISODES:-40000}"
 SESSION="${SESSION:-asteroids}"
 CURRICULUM="${CURRICULUM:-configs/rl-survival-v2.toml}"
 
-if ! command -v python3.12 >/dev/null 2>&1; then
-  echo "== installing python 3.12 and tmux =="
-  sudo apt-get update -qq
+sudo apt-get update -qq
+if command -v python3.12 >/dev/null 2>&1; then
+  # Ubuntu 24.04 ships python3.12 but NOT python3.12-venv, and venv creation fails with
+  # "ensurepip is not available" without it. Installing it is idempotent.
+  sudo apt-get install -y -qq python3.12-venv git tmux
+else
+  echo "== installing python 3.12 (not in this release) =="
   sudo apt-get install -y -qq software-properties-common
   sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null
   sudo apt-get update -qq
-  sudo apt-get install -y -qq python3.12 python3.12-venv tmux git
+  sudo apt-get install -y -qq python3.12 python3.12-venv git tmux
 fi
-command -v tmux >/dev/null 2>&1 || sudo apt-get install -y -qq tmux
 
 if [ ! -x .venv/bin/python ]; then
   echo "== creating .venv =="
