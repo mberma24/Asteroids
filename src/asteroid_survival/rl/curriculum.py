@@ -231,6 +231,13 @@ class CurriculumStage:
     that desugars into a composition. Defaults to 3 so that every existing stage strips it
     from the task hash and no trained checkpoint is invalidated by the field existing.
     """
+    variety_probability: float = 0.0
+    """Chance a rock is drawn slow rather than at this round's difficulty.
+
+    An overfitting check. Late rounds are uniformly fast, wide, and short-period, which a
+    policy can exploit by assuming those properties instead of reading each rock. Defaults
+    to 0.0 so every existing stage strips it from the task hash.
+    """
     ships: int = 1
     """How many ships fly this round, all of them driven by the same policy.
 
@@ -283,6 +290,7 @@ class CurriculumStage:
             asteroid.initial_asteroids = min(self.initial_asteroids, asteroid.active_cap)
             asteroid.spawn_safe_radius = self.spawn_safe_radius
             asteroid.spawn_safe_seconds = self.spawn_safe_seconds
+            asteroid.variety_probability = self.variety_probability
         else:
             # Leave every wave-stage knob exactly as it was, so the config a wave stage
             # produces -- and therefore its task hash -- is unchanged by survival support.
@@ -448,6 +456,8 @@ def load_curriculum(path: str | Path) -> CurriculumSpec:
                 "ships": int(progression.get("ships", 1)),
                 "asteroid_size": phase.get(
                     "asteroid_size", progression.get("asteroid_size", 3)),
+                "variety_probability": float(phase.get(
+                    "variety_probability", progression.get("variety_probability", 0.0))),
                 "initial_asteroids": stepped("initial_asteroids", index, 0.0),
                 "spawn_safe_radius": float(progression.get("spawn_safe_radius", 0.0)),
                 "spawn_safe_seconds": float(progression.get("spawn_safe_seconds", 0.0)),
@@ -481,6 +491,7 @@ def load_curriculum(path: str | Path) -> CurriculumSpec:
         spawn_safe_seconds=float(item.get("spawn_safe_seconds", 0.0)),
         ships=int(item.get("ships", 1)),
         asteroid_size=_asteroid_size(item.get("asteroid_size", 3)),
+        variety_probability=float(item.get("variety_probability", 0.0)),
     ) for item in stage_items)
     stages = (parent.stages if parent is not None else ()) + added_stages
     if not stages:

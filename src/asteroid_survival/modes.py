@@ -40,6 +40,10 @@ MODES: dict[str, Mode] = {
                      curriculum="configs/rl-endless.toml"),
     "survival-v2": Mode("survival-v2", "nonlinear-first survival v2 round",
                         curriculum="configs/rl-survival-v2.toml"),
+    # Rounds 97-100 mix slow rocks back into the late-game distribution, so this mode is
+    # how the overfitting check is played, watched, or scored.
+    "varied": Mode("varied", "survival v2 plus the varied overfitting rounds",
+                   curriculum="configs/rl-survival-v2-varied.toml"),
 }
 
 # Controller name -> the ship id it plays under. Ids are what the scoreboard shows.

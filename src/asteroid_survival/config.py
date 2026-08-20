@@ -142,6 +142,18 @@ class AsteroidConfig:
     observation distribution stationary within a step, which is easier for a learner than
     difficulty that drifts under it on every frame.
     """
+    variety_probability: float = 0.0
+    """Chance that a spawning asteroid is drawn slow instead of at the round's difficulty.
+
+    A round whose every rock is fast, wide-swinging, and short-period is a narrow
+    distribution, and a policy can pass it by assuming those properties rather than by
+    reading each rock. When this fires, the asteroid's speed and amplitude are scaled down
+    and its period stretched by the same factor, so it is coherently sluggish rather than
+    randomly inconsistent. Zero keeps every rock at the round's difficulty.
+    """
+    variety_scale_min: float = 0.25
+    """Slowest draw a varied asteroid can take, as a fraction of the round's difficulty."""
+
     endless_pressure_per_minute: float = 0.0
     """Growth that continues after the ramp finishes, so no run is survivable forever.
 

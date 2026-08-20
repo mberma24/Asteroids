@@ -359,10 +359,19 @@ class Simulation:
         pattern = self._pattern()
         period = self._rng.uniform(difficulty.wavelength_min,
                                    max(difficulty.wavelength_min, difficulty.wavelength_max))
-        frequency = 2 * math.pi / period
         amplitude_max = max(cfg.amplitude_min, difficulty.amplitude_max)
+        amplitude = self._rng.uniform(cfg.amplitude_min, amplitude_max)
+        # One scale for all three, so a varied rock reads as coherently sluggish -- slower,
+        # swinging less far, and taking longer to do it -- rather than as an incoherent mix
+        # of fast travel with a lazy wobble.
+        if cfg.variety_probability > 0 and self._rng.random() < cfg.variety_probability:
+            scale = self._rng.uniform(min(1.0, cfg.variety_scale_min), 1.0)
+            speed *= scale
+            amplitude *= scale
+            period /= max(1e-6, scale)
+        frequency = 2 * math.pi / period
         asteroid = _Asteroid(self._new_id(), pos, direction.normalized(), speed, pattern,
-                             self._rng.uniform(cfg.amplitude_min, amplitude_max), frequency,
+                             amplitude, frequency,
                              self._rng.uniform(0, 2 * math.pi), 0.0, spawn_size, pos,
                              direction.normalized() * speed)
         return asteroid

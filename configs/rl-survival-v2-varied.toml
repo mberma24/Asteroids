@@ -1,0 +1,73 @@
+# Rounds 97-100: the overfitting check.
+#
+# Everything below round 97 moves in one direction -- by round 96 every rock is fast, swings
+# wide, and oscillates quickly. A policy can pass that by *assuming* those properties rather
+# than by reading each rock: lead by a fixed amount, expect a turn, never wait. These four
+# rounds keep round 96's difficulty as the default draw and mix a minority of slow rocks
+# back in, so a policy that has memorised the late-game distribution starts missing.
+#
+# `variety_probability` scales one rock's speed, amplitude, and period together, so a varied
+# rock is coherently sluggish rather than an incoherent blend. The share rises 25% -> 40%
+# across the four rounds; the underlying difficulty keeps climbing, so these are not a rest.
+#
+# Deliberately a separate file: appending these to rl-survival-v2.toml would change its task
+# hash and strand every checkpoint trained against it.
+[curriculum]
+extends = "rl-survival-v2.toml"
+
+[progression]
+rounds = 4
+name_prefix = "varied-round"
+survival = true
+asteroid_size = "mixed"
+patterns = [
+  "sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change",
+  "serpentine", "corkscrew", "figure_eight", "spiral", "brownian",
+]
+# Eleven curves plus a straight line, each 1/12 -- same rule as every other round.
+linear_probability = 0.0833333
+movement_enabled = true
+ship_invulnerable = false
+
+# Round 97 starts exactly where round 96 ended, and every knob keeps tightening.
+min_speed_start = 126.0
+min_speed_step = 1.05263
+max_speed_start = 196.0
+max_speed_step = 1.66316
+amplitude_min_start = 12.0
+amplitude_min_step = 0.12632
+amplitude_max_start = 160.0
+amplitude_max_step = 1.68421
+wavelength_min_start = 1.4
+wavelength_min_step = -0.01
+wavelength_max_start = 2.4
+wavelength_max_step = -0.01
+spawn_interval_start = 0.75
+spawn_interval_step = -0.01
+spawn_spread_start = 24.0
+spawn_spread_step = -1.0
+initial_asteroids_start = 20.0
+initial_asteroids_step = 0.25
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+
+[[progression.phases]]
+until = 1
+variety_probability = 0.25
+
+[[progression.phases]]
+until = 2
+variety_probability = 0.30
+
+[[progression.phases]]
+until = 3
+variety_probability = 0.35
+
+[[progression.phases]]
+until = 4
+variety_probability = 0.40

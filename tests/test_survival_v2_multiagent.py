@@ -93,3 +93,60 @@ def test_straight_line_is_one_trajectory_among_equals():
         assert stage.linear_probability == pytest.approx(expected, abs=1e-4), (
             f"round {index}: straight is {stage.linear_probability:.3f} of spawns against "
             f"{expected:.3f} for each of its {len(stage.patterns)} curves")
+
+
+def test_varied_rounds_extend_v2_without_moving_its_task_hash():
+    """The overfitting rounds must not strand checkpoints trained on the base ladder.
+
+    They live in their own file for exactly this reason: appending rounds to
+    rl-survival-v2.toml changes what `task_hash` digests, and a run resuming against it
+    would refuse to continue.
+    """
+    from asteroid_survival.rl.curriculum import task_hash
+
+    base = load_curriculum("configs/rl-survival-v2.toml")
+    varied = load_curriculum("configs/rl-survival-v2-varied.toml")
+
+    assert len(base.stages) == 96 and len(varied.stages) == 100
+    assert task_hash(load_curriculum("configs/rl-survival-v2.toml")) == task_hash(base)
+    # Rounds 1-96 are inherited byte for byte, so retention still covers the whole ladder.
+    assert [stage.name for stage in varied.stages[:96]] == [stage.name for stage in base.stages]
+    assert all(stage.variety_probability == 0.0 for stage in varied.stages[:96])
+    assert [round(stage.variety_probability, 2) for stage in varied.stages[96:]] == [
+        0.25, 0.30, 0.35, 0.40]
+
+
+def test_varied_rounds_keep_most_rocks_at_full_difficulty():
+    """A minority of slow rocks, not a slower round.
+
+    The check only means something if the round is still round 96 for most of what spawns;
+    otherwise it measures whether the policy can handle an easier game, which is a different
+    question.
+    """
+    import math
+
+    from asteroid_survival.rl.environment import AsteroidsRLEnv
+
+    spec = load_curriculum("configs/rl-survival-v2-varied.toml")
+    stage = spec.stages[96]
+    config = stage.game_config(spec.base)
+    config.ship.invulnerable = True
+    env = AsteroidsRLEnv(config, "agent", frame_skip=4, max_decisions=stage.max_decisions,
+                         reward_config=spec.reward, completion=stage.completion)
+    speeds, periods = [], []
+    for seed in range(20):
+        env.reset(seed)
+        for _ in range(60):
+            _, _, terminated, truncated, _ = env.step(0)
+            if terminated or truncated:
+                break
+        for asteroid in env.simulation._asteroids:
+            speeds.append(asteroid.speed)
+            if asteroid.frequency:
+                periods.append(2 * math.pi / asteroid.frequency)
+
+    slow = [speed for speed in speeds if speed < stage.min_speed * 0.95]
+    assert 0.10 < len(slow) / len(speeds) < 0.45, (
+        f"{len(slow) / len(speeds):.0%} of rocks are slow; wanted a minority")
+    assert min(speeds) < stage.min_speed * 0.6, "no genuinely slow rock ever appeared"
+    assert max(periods) > stage.wavelength_max * 2, "no genuinely slow oscillation appeared"

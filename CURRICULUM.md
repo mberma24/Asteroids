@@ -48,3 +48,47 @@ The reward baseline is `0.10` per complete decision survived (time-prorated on a
 fatal decision), `+10` for reaching 30 seconds alive, `-5` on death, split-neutral asteroid
 rewards of `0.60/0.30/0.15`, and `-0.02` per miss. The death-10 and safety-potential TOMLs are
 ablation configs, not silent baseline changes.
+
+## Rounds 97-100: the overfitting check
+
+`configs/rl-survival-v2-varied.toml` extends the ladder with four more rounds. It is a
+separate file on purpose -- appending rounds to `rl-survival-v2.toml` would change its task
+hash and strand every checkpoint trained against it. Rounds 1-96 are inherited unchanged and
+stay in the retention set.
+
+Everything below round 97 moves one way: by round 96 every rock is fast, swings wide, and
+oscillates quickly. A policy can pass that by *assuming* those properties instead of reading
+each rock -- lead by a fixed amount, expect a turn, never wait. These rounds keep round 96's
+difficulty as the default draw and mix a minority of slow rocks back in.
+
+| Round | Varied share | Everything else |
+|---:|---:|---|
+| 97 | 25% | round 96's envelope, still tightening each round |
+| 98 | 30% | |
+| 99 | 35% | |
+| 100 | 40% | |
+
+`variety_probability` scales one rock's speed, amplitude, and period **together**, so a
+varied rock is coherently sluggish rather than an incoherent blend of fast travel and a lazy
+wobble. The scale is drawn from 0.25 to 1.0.
+
+Measured over 1,000 spawns, round 97 against round 96:
+
+| | round 96 | round 97 |
+|---|---:|---:|
+| median speed | 171.7 | 150.1 |
+| 10th-percentile speed | 137.1 | 67.5 |
+| slowest rock | 126.0 | 37.1 |
+| rocks below the round's speed floor | 0% | 28% |
+| longest period | 2.40s | 9.15s |
+
+Play or score them with the `varied` mode:
+
+```bash
+./run.sh play varied 97
+./run.sh watch varied 100 20
+```
+
+A policy that has genuinely learned to read asteroids should lose only a little here. One
+that has memorised the late-game distribution will fall off a cliff -- which is the number
+this check exists to produce.
