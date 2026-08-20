@@ -373,10 +373,16 @@ cmd_train_ppo_endless() {    # survival ladder: transfer the best model into rou
     cmd_train_ppo 0 "$episodes"
 }
 
-# The rung a checkpoint actually belongs on: the lowest round it cannot already pass.
-# Forking above it leaves the ladder unable to promote -- the run sits there needing a
-# large jump in skill before anything moves -- and forking below it re-teaches what the
-# policy already knows. Binary search, because difficulty is monotone in the round number.
+# The rung a checkpoint actually belongs on: one above the highest round it can already
+# clear. Forking above that leaves the ladder unable to promote; forking below re-teaches
+# what the policy already knows.
+#
+# Do NOT binary search from round 1. Skill is not monotone in the round number -- a policy
+# that trained up to round 18 measured 75% on round 1 while passing round 12 comfortably,
+# because it specialised on the crowded fields of the later rungs. A search that stops at
+# the first failure sends such a policy back to the start. Instead, anchor on the stage the
+# checkpoint itself recorded and walk outward from there, which is also cheaper: the anchor
+# is usually right or one rung off.
 measure_fork_stage() {
   $PY - "$1" "$2" "${FORK_SEEDS:-24}" <<'PYEOF'
 import json, sys, warnings
@@ -392,9 +398,13 @@ _, PPO, _, _, _ = require_ppo()
 layout = json.loads((checkpoint / "metadata.json").read_text())["observation_layout"]
 spec = load_curriculum(curriculum)
 model = PPO.load(str(checkpoint / "model.zip"), device="cpu")
+top = len(spec.stages)
+memo: dict[int, bool] = {}
 
 
 def passes(round_number: int) -> bool:
+    if round_number in memo:
+        return memo[round_number]
     env = _stage_env(spec, round_number - 1, layout)
     scores = [evaluate_policy(
         env, lambda o: int(np.asarray(model.predict(o, deterministic=True)[0]).item()), [seed])
@@ -404,20 +414,38 @@ def passes(round_number: int) -> bool:
     ok = clear >= spec.promotion_clear_rate and survival >= spec.promotion_completion
     print(f"  round {round_number:>3}: clear {clear:5.1%}  survival {survival:5.1%}  "
           f"{'pass' if ok else 'fail'}", file=sys.stderr, flush=True)
+    memo[round_number] = ok
     return ok
 
 
-low, high = 1, len(spec.stages)          # low always passes or is the floor; high never does
-if not passes(low):
-    print(low)
-    raise SystemExit
-while high - low > 1:
-    middle = (low + high) // 2
-    if passes(middle):
-        low = middle
-    else:
-        high = middle
-print(high)
+# The checkpoint knows which rung it was training on; start the search there.
+anchor = 1
+state = checkpoint / "curriculum_state.json"
+if state.is_file():
+    try:
+        anchor = min(top, max(1, int(json.loads(state.read_text()).get("stage", 0)) + 1))
+    except (ValueError, TypeError):
+        anchor = 1
+print(f"  anchored on round {anchor} (the rung this checkpoint was training on)",
+      file=sys.stderr, flush=True)
+
+budget = 15
+if passes(anchor):
+    highest = anchor
+    while highest < top and budget > 0:
+        budget -= 1
+        if not passes(highest + 1):
+            break
+        highest += 1
+    print(min(top, highest + 1))
+else:
+    probe = anchor - 1
+    while probe >= 1 and budget > 0:
+        budget -= 1
+        if passes(probe):
+            break
+        probe -= 1
+    print(max(1, probe + 1))
 PYEOF
 }
 
