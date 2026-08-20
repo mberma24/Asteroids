@@ -17,16 +17,20 @@ SESSION="${SESSION:-asteroids}"
 CURRICULUM="${CURRICULUM:-configs/rl-survival-v2.toml}"
 
 sudo apt-get update -qq
-if command -v python3.12 >/dev/null 2>&1; then
-  # Ubuntu 24.04 ships python3.12 but NOT python3.12-venv, and venv creation fails with
-  # "ensurepip is not available" without it. Installing it is idempotent.
-  sudo apt-get install -y -qq python3.12-venv git tmux
-else
-  echo "== installing python 3.12 (not in this release) =="
+# git and tmux are missing from Minimal images, and python3.12-venv is missing everywhere:
+# Ubuntu ships python3.12 without it, and venv creation then fails with "ensurepip is not
+# available". All of this is idempotent, so it runs unconditionally.
+sudo apt-get install -y -qq git tmux
+
+# 24.04 carries python3.12 in its own repositories -- Minimal images simply do not preinstall
+# it. Try the distribution first and only reach for the PPA on an older release that has no
+# 3.12 at all, because adding a third-party archive is the more fragile path.
+if ! sudo apt-get install -y -qq python3.12 python3.12-venv 2>/dev/null; then
+  echo "== python 3.12 is not in this release's repositories; using the deadsnakes PPA =="
   sudo apt-get install -y -qq software-properties-common
   sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null
   sudo apt-get update -qq
-  sudo apt-get install -y -qq python3.12 python3.12-venv git tmux
+  sudo apt-get install -y -qq python3.12 python3.12-venv
 fi
 
 if [ ! -x .venv/bin/python ]; then
