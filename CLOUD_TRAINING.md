@@ -92,3 +92,19 @@ Durable metadata records about 21 training wall hours: 12.5 CPU and 8.5 Apple-MP
 **zero cloud GPU hours**. Do not project mastery from episode counts -- dwell time on hard
 rungs and evaluation cost dominate. Recalculate from each checkpoint's measured
 `decisions_per_second`.
+
+## Resuming the current run
+
+Stopped at episode 21,250 on round 18 (`models/ppo-v2-kl-0820-0044`). `RESUME` restores the
+optimizer, curriculum stage, and logs, but the learning-rate override is applied at runtime
+rather than stored in `settings`, so pass it again or the run silently reverts to 3e-4:
+
+```bash
+PPO_DEVICE=cpu PPO_TARGET_KL=0.02 LEARNING_RATE=1e-4 \
+CURRICULUM=configs/rl-survival-v2.toml \
+OUTPUT=models/ppo-v2-kl-0820-0044 \
+RESUME=models/ppo-v2-kl-0820-0044/checkpoint_021250 \
+./run.sh train-ppo 40000
+```
+
+The episode count is *additional*, not a target total.
