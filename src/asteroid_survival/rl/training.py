@@ -6,6 +6,7 @@ import statistics
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from typing import TYPE_CHECKING
 import numpy as np
 
 from ..config import load_config
@@ -13,7 +14,8 @@ from ..controllers import ClosestAsteroidController
 from .environment import (ASTEROID_FEATURES, PROJECTILE_FEATURES, AsteroidsRLEnv,
                           RewardConfig, ship_feature_count)
 from .evaluation import evaluate_policy, save_evaluation
-from .muzero import MuZeroAgent, MuZeroSettings, ReplayBuffer, Transition, finish_episode
+if TYPE_CHECKING:                      # jax/flax are a MuZero-only dependency
+    from .muzero import MuZeroAgent, MuZeroSettings, ReplayBuffer, Transition
 
 
 SUMMARY_FIELDS = ("survival_time", "wave", "waves_cleared", "asteroids_destroyed",
@@ -239,6 +241,8 @@ class ChampionTracker:
 def restore_agent_from_champion(agent: MuZeroAgent, checkpoint: str | Path,
                                 learning_rate: float, seed: int) -> None:
     """Restore policy/model weights but deliberately retain replay and episode counters."""
+    from .muzero import (MuZeroAgent, MuZeroSettings, ReplayBuffer, Transition,
+                         finish_episode)
     champion = MuZeroAgent.load(checkpoint, seed=seed)
     if (champion.observation_size, champion.num_actions) != (
             agent.observation_size, agent.num_actions):
@@ -340,6 +344,8 @@ def initialize_agent_from_policy(checkpoint: str | Path, observation_size: int,
                                  num_actions: int, settings: MuZeroSettings,
                                  seed: int) -> MuZeroAgent:
     """Transfer perception, dynamics, and aiming while resetting task-specific learning."""
+    from .muzero import (MuZeroAgent, MuZeroSettings, ReplayBuffer, Transition,
+                         finish_episode)
     source = MuZeroAgent.load(checkpoint, seed=seed)
     if source.num_actions != num_actions or source.observation_size > observation_size:
         raise ValueError("initial checkpoint observation/action shapes cannot be transferred")
@@ -452,6 +458,8 @@ def train(config_path: str | Path, output_dir: str | Path, *, episodes: int, see
           log_every: int = 10, parallel_envs: int = 1, shot_penalty: float = 0.0,
           history_frames: int = 0, history_long_frames: int = 0,
           history_long_stride: int = 8) -> Path:
+    from .muzero import (MuZeroAgent, MuZeroSettings, ReplayBuffer, Transition,
+                         finish_episode)
     config = load_config(config_path)
     env = AsteroidsRLEnv(
         config, frame_skip=4, max_decisions=max_decisions, asteroid_reward=asteroid_reward,
@@ -577,6 +585,8 @@ def train_curriculum(curriculum_path: str | Path, output_dir: str | Path, *, epi
                      resume_learning_rate: float | None = None,
                      start_stage: int | None = None) -> Path:
     """Train on mastery-gated wave tasks while evaluating every frozen stage separately."""
+    from .muzero import (MuZeroAgent, MuZeroSettings, ReplayBuffer, Transition,
+                         finish_episode)
     from .curriculum import (CurriculumManager, load_curriculum, reward_matches,
                              task_hash, task_hash_matches)
 
@@ -932,6 +942,8 @@ def evaluate(checkpoint: str | Path, config_path: str | Path, output_path: str |
              episodes: int, seed: int, max_decisions: int, asteroid_reward: float = 0.1,
              shot_penalty: float = 0.0, history_frames: int = 0,
              history_long_frames: int = 0, history_long_stride: int = 8) -> dict:
+    from .muzero import (MuZeroAgent, MuZeroSettings, ReplayBuffer, Transition,
+                         finish_episode)
     config = load_config(config_path)
     env = AsteroidsRLEnv(
         config, frame_skip=4, max_decisions=max_decisions, asteroid_reward=asteroid_reward,
