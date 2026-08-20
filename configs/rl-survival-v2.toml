@@ -12,6 +12,11 @@ promotion_streak = 2
 promotion_window = 4
 current_stage_probability = 0.65
 evaluation_episodes = 64
+# 8, not the 16 default: with retention_sample = 10 the retention sweep alone was 160
+# episodes against 250 of training, so 47% of every run was measurement rather than
+# learning. At 8 it is 144 per 250, and retention is a pooled statistic over ten rounds --
+# it does not need per-round precision.
+retention_evaluation_episodes = 8
 evaluation_panels = 4
 test_evaluation_episodes = 128
 observation_version = 5
