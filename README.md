@@ -188,6 +188,12 @@ the mix, but it is not privileged either.
 
 ### The ladder's seven tiers
 
+These tiers are **`configs/rl-endless.toml`**, not the survival-v2 curriculum. Both are
+96 rounds and both are survival ladders, so check which one a run was launched with
+before reading a round number off this table. Everything here flies straight until
+round 39; survival-v2 introduces sine at round 3 and all eleven patterns at round 23.
+For that schedule see `CURRICULUM.md`.
+
 Ninety-six rounds, **thirty seconds each**. The limit only bounds episode cost — the
 objective is to survive as long as possible, and a shorter round simply buys twice as many
 rungs.

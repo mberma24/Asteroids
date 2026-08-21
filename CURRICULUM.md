@@ -1,5 +1,10 @@
 # Survival v2 round reference
 
+This documents **`configs/rl-survival-v2.toml`**. Do not confuse it with
+`configs/rl-endless.toml`, documented under "Endless survival ladder" in `README.md`:
+that one is also 96 rounds but flies straight until round 39, whereas this one introduces
+sine at round 3.
+
 All 96 rounds last 30 seconds. The authoritative per-round table is generated from the same
 config the trainer uses:
 
