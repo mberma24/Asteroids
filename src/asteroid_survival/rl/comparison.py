@@ -49,6 +49,21 @@ def run_policy(env: AsteroidsRLEnv, policy: Callable[[Any], int], seeds: list[in
     return episodes
 
 
+def pilot_episodes(config: GameConfig, seeds: list[int], **kwargs) -> list[dict]:
+    """The scripted pilot: leads its shots and dodges. A harder yardstick than greedy."""
+    from ..controllers import PilotController
+
+    env = _make_env(config, **kwargs)
+    controller = PilotController()
+
+    def policy(observation) -> int:
+        del observation
+        assert env.state is not None
+        return env.actions.index(controller.action(env.state, env.agent_id))
+
+    return run_policy(env, policy, seeds)
+
+
 def greedy_episodes(config: GameConfig, seeds: list[int], **kwargs) -> list[dict]:
     env = _make_env(config, **kwargs)
     controller = ClosestAsteroidController()
@@ -222,7 +237,8 @@ def compare(config_path: str | Path | GameConfig, output_path: str | Path, *,
             episodes: int, seed: int, max_decisions: int, asteroid_reward: float = 0.1,
             shot_penalty: float = 0.0, history_frames: int = 0,
             history_long_frames: int = 0, history_long_stride: int = 8,
-            include_human: bool = True, include_greedy: bool = True) -> dict:
+            include_human: bool = True, include_greedy: bool = True,
+            include_pilot: bool = True) -> dict:
     config = config_path if isinstance(config_path, GameConfig) else load_config(config_path)
     seeds = list(range(seed, seed + episodes))
     env_kwargs = {"max_decisions": max_decisions, "asteroid_reward": asteroid_reward,
@@ -241,6 +257,9 @@ def compare(config_path: str | Path | GameConfig, output_path: str | Path, *,
     if include_greedy:
         print("Running greedy baseline...")
         played["greedy"] = greedy_episodes(config, seeds, **env_kwargs)
+    if include_pilot:
+        print("Running pilot baseline...")
+        played["pilot"] = pilot_episodes(config, seeds, **env_kwargs)
 
     taken = set(played)
     lineup: dict[str, str] = {}

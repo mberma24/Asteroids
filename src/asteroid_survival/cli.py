@@ -8,7 +8,7 @@ from .actions import Action
 from .config import GameConfig, ShipSpec, load_config
 from .modes import MODES, build as build_mode
 from .controllers import (ClosestAsteroidController, HeuristicController, KeyProfile,
-                          RandomController, gamepad_action, human_action)
+                          PilotController, RandomController, gamepad_action, human_action)
 from .simulation import Simulation
 
 
@@ -143,6 +143,8 @@ def _controllers(config: GameConfig, seed: int):
             result[spec.id] = HeuristicController()
         elif spec.controller == "closest":
             result[spec.id] = ClosestAsteroidController()
+        elif spec.controller == "pilot":
+            result[spec.id] = PilotController()
     return result
 
 
@@ -516,6 +518,8 @@ def main(argv: list[str] | None = None) -> int:
         help="a checkpoint to include; repeat to compare several models")
     compare_parser.add_argument(
         "--no-greedy", action="store_true", help="leave the greedy baseline out")
+    compare_parser.add_argument(
+        "--no-pilot", action="store_true", help="leave the scripted pilot baseline out")
     args = parser.parse_args(argv)
     if args.command == "graph":
         from .rl.plotting import plot_progress
@@ -567,7 +571,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"scoring {label}")
         report = compare(
             target, args.output, checkpoint=args.checkpoint, checkpoints=args.models,
-            include_greedy=not args.no_greedy, episodes=args.episodes,
+            include_greedy=not args.no_greedy, include_pilot=not args.no_pilot,
+            episodes=args.episodes,
             seed=args.seed, max_decisions=args.max_decisions,
             asteroid_reward=args.asteroid_reward, shot_penalty=args.shot_penalty,
             history_frames=args.history_frames,

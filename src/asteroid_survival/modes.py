@@ -47,7 +47,8 @@ MODES: dict[str, Mode] = {
 }
 
 # Controller name -> the ship id it plays under. Ids are what the scoreboard shows.
-ROSTER_IDS = {"human": "you", "closest": "greedy", "ppo": "model", "muzero": "model"}
+ROSTER_IDS = {"human": "you", "closest": "greedy", "pilot": "pilot",
+              "ppo": "model", "muzero": "model"}
 
 
 def _project_path(value: str | Path) -> Path:

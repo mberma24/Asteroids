@@ -319,7 +319,7 @@ class GameConfig:
             raise ValueError("max_waves must be positive")
         for spec in self.ships:
             if spec.controller not in {
-                    "human", "random", "heuristic", "closest", "muzero", "ppo"}:
+                    "human", "random", "heuristic", "closest", "pilot", "muzero", "ppo"}:
                 raise ValueError(f"unknown controller for {spec.id}: {spec.controller}")
 
 

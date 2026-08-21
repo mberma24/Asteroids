@@ -2019,8 +2019,10 @@ def test_versus_scores_each_contender_in_its_own_game():
                      Path(__file__).parent / "_versus.json",
                      checkpoints=[], episodes=2, seed=4242, max_decisions=120,
                      include_human=False)
-    assert set(report["summary"]) == {"greedy"}
+    # Both scripted baselines run by default; the pilot is the harder of the two.
+    assert set(report["summary"]) == {"greedy", "pilot"}
     assert report["summary"]["greedy"]["episodes"] == 2
+    assert report["summary"]["pilot"]["episodes"] == 2
     (Path(__file__).parent / "_versus.json").unlink(missing_ok=True)
 
 

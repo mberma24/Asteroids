@@ -260,6 +260,7 @@ cmd_versus() {        # score several models against each other, each in its own
   unset IFS
   [ "${HUMAN:-0}" = "1" ] || args+=(--no-human)
   [ "${GREEDY:-1}" = "1" ] || args+=(--no-greedy)
+  [ "${PILOT:-1}" = "1" ] || args+=(--no-pilot)
   $PY -m asteroid_survival compare "${args[@]}" --history-frames "${HISTORY_FRAMES:-8}" \
     --history-long-frames "${HISTORY_LONG_FRAMES:-8}" --history-long-stride "${HISTORY_LONG_STRIDE:-8}"
 }
@@ -897,6 +898,7 @@ Overrides (environment variables)
   MODELS=a,b        checkpoints for `versus` (default: the newest run's champion)
   HUMAN=1           include yourself in `versus`
   GREEDY=0          leave the greedy baseline out of `versus`
+  PILOT=0           leave the scripted pilot baseline out
   ALGO=muzero       showdown against MuZero instead of PPO
   CONFIG=path       raw config for compare/watch/baseline when no mode is given
   OUTPUT=path       where to write a new training run

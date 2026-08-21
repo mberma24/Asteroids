@@ -80,6 +80,30 @@ Arguments are positional and always in this order:
 Controls: A/D or Left/Right rotate, W or Up thrusts, Space fires, P pauses, R restarts,
 Escape quits. In `preview`, N advances to a new seed and R repeats the current one.
 
+## Baselines
+
+Two scripted opponents, neither of which learns, both deterministic:
+
+| Baseline | What it does |
+|---|---|
+| `greedy` | Rotates toward the nearest rock's *current* position and fires. Never thrusts. |
+| `pilot` | Leads its shots by solving the intercept, and thrusts away from rocks whose closest approach is inside its own radius. |
+
+Greedy stops discriminating between policies exactly where the ladder gets interesting,
+because it cannot dodge and cannot hit a crossing target. The pilot is the harder yardstick.
+Measured over 20 seeds per round on survival-v2:
+
+| Round | greedy clears | pilot clears |
+|---:|---:|---:|
+| 1-15 | 100% | 100% |
+| 20 | 80% | **100%** |
+| 25 | 35% | **70%** |
+| 30 | 10% | **40%** |
+| 40 | 0% | **15%** |
+
+Both appear automatically in `watch`, `compare`, and `versus`. Drop either with `GREEDY=0`
+or `PILOT=0`. `pilot` is also a lineup name, so `./run.sh play` and `showdown` can use it.
+
 **Shared arena versus separate games.** `showdown` puts everyone in one arena, so one
 player's kills help the others — it is a demo, not a measurement. `compare`, `watch`, and
 `versus` give every contender its own run of the same seeds, which is what to trust.

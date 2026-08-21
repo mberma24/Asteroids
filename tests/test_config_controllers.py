@@ -215,3 +215,67 @@ def test_every_dispatched_command_actually_exists():
     defined = set(re.findall(r"^(cmd_[a-z_]+)\(\) \{", script, re.MULTILINE))
     referenced = set(re.findall(r"\b(cmd_[a-z_]+)\b", script))
     assert referenced <= defined, f"dispatched but never defined: {sorted(referenced - defined)}"
+
+
+def test_pilot_baseline_beats_greedy_once_rounds_get_hard():
+    """The scripted pilot exists to be a yardstick greedy cannot be.
+
+    Greedy never thrusts and aims where a rock is rather than where it will be, so it stops
+    discriminating between policies exactly where the ladder gets interesting. The pilot
+    leads its shots and dodges, and must not be worse than greedy anywhere.
+    """
+    from asteroid_survival.controllers import ClosestAsteroidController, PilotController
+    from asteroid_survival.rl.curriculum import load_curriculum
+    from asteroid_survival.rl.environment import AsteroidsRLEnv
+
+    spec = load_curriculum("configs/rl-survival-v2.toml")
+
+    def survival(round_number, controller):
+        stage = spec.stages[round_number - 1]
+        env = AsteroidsRLEnv(stage.game_config(spec.base), "agent", frame_skip=4,
+                             max_decisions=stage.max_decisions, reward_config=spec.reward,
+                             completion=stage.completion)
+        total = 0.0
+        for seed in range(700, 724):
+            env.reset(seed)
+            while True:
+                action = controller.action(env.state, env.agent_id)
+                _, _, terminated, truncated, info = env.step(env.actions.index(action))
+                if terminated or truncated:
+                    break
+            total += info["episode_metrics"]["survival_time"]
+        return total / 24
+
+    # Round 40 and 24 seeds, chosen by measurement: at twelve seeds the spread between
+    # episodes (sd ~9s) leaves a standard error near 2.6s, which is larger than the gap on
+    # the easier rounds. Here the advantage is +3.9s and stable across seed sets.
+    hard = 40
+    pilot = survival(hard, PilotController())
+    greedy = survival(hard, ClosestAsteroidController())
+    assert pilot > greedy + 2.0, (
+        f"pilot {pilot:.1f}s vs greedy {greedy:.1f}s on round {hard}: the stronger baseline "
+        "is not actually stronger")
+
+
+def test_pilot_is_deterministic():
+    """A baseline that wobbles cannot anchor a comparison."""
+    from asteroid_survival.controllers import PilotController
+    from asteroid_survival.rl.curriculum import load_curriculum
+    from asteroid_survival.rl.environment import AsteroidsRLEnv
+
+    spec = load_curriculum("configs/rl-survival-v2.toml")
+    stage = spec.stages[19]
+    outcomes = []
+    for _ in range(2):
+        env = AsteroidsRLEnv(stage.game_config(spec.base), "agent", frame_skip=4,
+                             max_decisions=stage.max_decisions, reward_config=spec.reward,
+                             completion=stage.completion)
+        controller = PilotController()
+        env.reset(4242)
+        while True:
+            action = controller.action(env.state, env.agent_id)
+            _, _, terminated, truncated, info = env.step(env.actions.index(action))
+            if terminated or truncated:
+                break
+        outcomes.append(info["episode_metrics"]["survival_time"])
+    assert outcomes[0] == outcomes[1]
