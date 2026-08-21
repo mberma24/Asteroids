@@ -26,13 +26,15 @@ REPORTED = ("survival_time", "wave", "asteroids_destroyed", "accuracy", "shots_f
 
 def _make_env(config: GameConfig, max_decisions: int, asteroid_reward: float,
               shot_penalty: float, history_frames: int = 0, history_long_frames: int = 0,
-              history_long_stride: int = 8, max_projectiles: int = 8) -> AsteroidsRLEnv:
+              history_long_stride: int = 8, max_projectiles: int = 8,
+              global_features: bool = False) -> AsteroidsRLEnv:
     return AsteroidsRLEnv(config, frame_skip=4, max_decisions=max_decisions,
                           asteroid_reward=asteroid_reward, shot_penalty=shot_penalty,
                           history_frames=history_frames,
                           history_long_frames=history_long_frames,
                           history_long_stride=history_long_stride,
-                          max_projectiles=max_projectiles)
+                          max_projectiles=max_projectiles,
+                          global_features=global_features)
 
 
 def run_policy(env: AsteroidsRLEnv, policy: Callable[[Any], int], seeds: list[int]) -> list[dict]:
@@ -81,7 +83,11 @@ def ppo_episodes(config: GameConfig, checkpoint: str | Path, seeds: list[int],
 
     metadata = json.loads((Path(checkpoint) / "metadata.json").read_text(encoding="utf-8"))
     layout = metadata.get("observation_layout") or {}
-    env = _make_env(config, max_projectiles=int(layout.get("max_projectiles", 0)), **kwargs)
+    # Observation v5 appends global threat features. Without this the scorer hands a v4
+    # observation to a v5 policy and stable-baselines3 rejects the shape outright, so
+    # `watch`/`compare`/`versus` could not score any v5 checkpoint at all.
+    env = _make_env(config, max_projectiles=int(layout.get("max_projectiles", 0)),
+                    global_features=int(layout.get("version", 4)) >= 5, **kwargs)
     controller = PPOController(checkpoint)
     episodes = []
     for episode_seed in seeds:

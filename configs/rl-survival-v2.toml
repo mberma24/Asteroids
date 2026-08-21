@@ -10,7 +10,7 @@ retention_floor = 0.50
 promotion_accuracy = 0.05
 promotion_streak = 2
 promotion_window = 4
-current_stage_probability = 0.65
+current_stage_probability = 0.80
 evaluation_episodes = 64
 # 8, not the 16 default: with retention_sample = 10 the retention sweep alone was 160
 # episodes against 250 of training, so 47% of every run was measurement rather than
