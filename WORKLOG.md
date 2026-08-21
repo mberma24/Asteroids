@@ -4,7 +4,69 @@ Running record of what has been changed and what was learned, so work can resume
 sessions without re-deriving it. Newest context at the top; the detail is chronological
 below.
 
-Last updated: 2026-08-19.
+Last updated: 2026-08-21.
+
+---
+
+## 2026-08-21: the plateau is a promotion gate, not a learning ceiling
+
+**The flat scores are two separate problems.** Within a stage the agent barely improves:
+fitting a trend to each stage's own evaluations gives +0.003 completion per 1,000 episodes
+against a per-evaluation noise of sigma ~= 0.035. Stage 16 of `ppo-v2-kl-0820-0044` got
+9,750 episodes and moved by less than one evaluation's noise; stage 19 of
+`oracle-survival-v2` got 12,750 episodes at a mean clear rate of 0.723 and then promoted on
+a 0.828 draw. Two independent runs, same signature.
+
+**Promotion is noise-gated.** The gate is `promotion_completion = 0.90` AND
+`promotion_clear_rate = 0.80`, needing 2 passes in a 4-evaluation window over 64 episodes.
+At a true clear rate of 0.707 the odds a single evaluation reads >= 0.80 are 0.039, which
+predicts 60-90 evaluations of waiting; stage 16 took 39 and stage 19 took 32. The dwell time
+is explained by the binomial, not by learning.
+
+**Which gate binds.** Across 105 Oracle evaluations: 16.2% pass both, 6.7% pass completion
+but fail clear, 1.0% pass clear but fail completion. Clear rate blocks 7x more often.
+Retention, the third condition in `consider_promotion`, has never blocked a promotion (0 of
+105).
+
+**Why they differ so much on the same episodes.** `clear_rate` is binary per episode
+(`completed_stage`), while `completion_rate` for a survival curriculum is
+`survival_fraction` = mean of `min(1, survival_time / limit)` -- partial credit. Dying at 26s
+of a 30s cap scores 0.87 completion and 0.00 clear. The agent almost always *nearly*
+survives, so the 0.90 partial-credit gate is mild and the 0.80 binomial gate is the wall.
+
+**Entropy was pinned.** `entropy_loss` sat at 1.07 nats for 25,000 episodes without drift
+(max is ln(16) = 2.77 for the mobile action set). `ent_coef = 0.01` holds the policy at
+~3-way random every decision in a game where one bad decision is fatal. `explained_variance`
+also sat flat at ~0.35, and `target_kl = 0.02` was early-stopping every update.
+
+**Experiment.** Added `--ent-coef` to `train-ppo` (commit c9bb424), applied after model load
+like `--learning-rate` so `--resume` still restores the checkpoint's other settings. Two
+local arms from `ppo-v2-kl-0820-0044/checkpoint_025500`, same seed and eval seeds, on stage
+18:
+
+| arm | evals | completion | clear | promoted |
+|---|---|---|---|---|
+| ent_coef 0.01 | 7 (1,500 eps) | 0.869 | 0.717 | no |
+| ent_coef 0.0025 | 5 (1,000 eps) | 0.905 | 0.772 | yes, ep 26,750 |
+
+The low-entropy arm then posted 0.828 and 0.781 clear on stage 19 immediately. The gap is
+~1.8 sigma (p ~= 0.08), so **not formally significant** -- it is corroborated by three
+independent signals (completion, clear, an actual promotion) and did not decay as
+evaluations accumulated, but it has not been established.
+
+**Running overnight.** `models/oracle-survival-v2` was stopped at episode ~33,250 and forked
+from its `checkpoint_033000` (stage 20) into `models/oracle-lowent` with
+`--ent-coef 0.0025`, everything else identical. The old directory is intact and resumable;
+`models/fork-point-032000` is a preserved copy in case checkpoint pruning removes 033000.
+Oracle has only 4 cores, so the two runs cannot run concurrently -- the banked 105-evaluation
+history of `oracle-survival-v2` is the control.
+
+**Next.** Compare `oracle-lowent` stage-20 clear rate against the banked
+`oracle-survival-v2` stage-20 baseline (4 evaluations, mean clear 0.656). Independently of
+the entropy result, the gate should judge the pooled ~256 episodes across the promotion
+window rather than requiring two individually lucky evaluations; that reclaims statistical
+power already being paid for. If entropy decay does not move it, revisit
+`explained_variance` 0.35 and `target_kl` 0.02.
 
 ---
 
