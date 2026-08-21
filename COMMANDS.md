@@ -143,7 +143,50 @@ Contenders are labelled from their run directory with the launch timestamp strip
 `models/ppo-nonlinear-v2-0818-1152/champion` shows as `nonlinear-v2`. The timestamp comes
 back only if two runs would otherwise collide.
 
-## The survival ladder and its tiers
+## Survival v2 rounds (`rl-survival-v2.toml`)
+
+The curriculum the current training runs use. Ninety-six rounds, **thirty seconds each**.
+Not the same as the endless ladder in the next section: v2 introduces sine at round 3 and
+all eleven patterns at round 23, where the endless ladder flies straight until round 38.
+
+```bash
+./run.sh rounds survival-v2      # every round's exact difficulty, from the config itself
+./run.sh play survival-v2 23     # play round 23 yourself
+./run.sh watch survival-v2 23    # agents only, fixed seeds, scored
+./run.sh showdown survival-v2 23 # you + greedy + newest model, one shared arena
+./run.sh compare survival-v2 23  # you and the agents on identical seeds, scored
+./run.sh preview models/oracle-lowent 23   # a specific run's champion on round 23
+```
+
+`rounds` reads the same config the trainer reads, so it can never drift from what is
+actually being trained. Everything else takes `survival-v2 N` exactly like any other mode.
+
+| Rounds | Movement pool | Straight | Spawn size |
+|---:|---|---:|---|
+| 1–2 | linear foundation | 100% | small |
+| 3–6 | sine | 50% | small |
+| 7–10 | sine, arc, S-curve | 25% | small |
+| 11–16 | smooth three | 25% | small → medium over three steps |
+| 17–22 | smooth three + zigzag, sawtooth, lane-change | 14.3% | medium |
+| 23–25 | **all eleven patterns** | 8.3% | 75% medium / 25% large |
+| 26–28 | all eleven patterns | 8.3% | 50% medium / 50% large |
+| 29–52 | all eleven patterns | 8.3% | large |
+| 53–82 | all eleven patterns | 8.3% | 75% large / 25% medium |
+| 83–96 | all eleven patterns | 8.3% | random mixed size |
+
+Every numeric knob — speed, amplitude, wavelength, spawn interval, spread, initial count —
+ramps linearly from round 1 to round 96, so no round is ever easier than the one before it.
+What jumps is **composition**: the pattern pool changes only at rounds 3, 7, 17, and 23, and
+the size mix only at 11, 13, 15, 23, 26, 29, 53, and 83. Round 23 is the largest single step
+in the whole curriculum — the only one that changes the pattern pool (6 → 11) and the size
+mix at the same time. Worth watching before and after:
+
+```bash
+./run.sh play survival-v2 22     # six patterns, all medium
+./run.sh play survival-v2 23     # eleven patterns, large rocks appear
+```
+
+## The endless survival ladder and its tiers
 
 Ninety-six rounds, **thirty seconds each**. A round is cleared by staying alive to the
 limit — the limit only bounds episode cost, the objective is to survive as long as possible.
@@ -190,8 +233,10 @@ ladder is above where a hand-written policy stops.
 ## Trajectory patterns
 
 Eleven shapes, listed in `PATTERN_NAMES`. Rounds 29+ of the nonlinear curriculum sample all
-of them uniformly, per asteroid. The survival ladder introduces them gradually: straight
+of them uniformly, per asteroid. The *endless* ladder introduces them gradually: straight
 lines to round 38, three curves through round 52, then the full set from round 53 on.
+**Survival v2 is much earlier** — sine at round 3, six patterns by round 17, all eleven at
+round 23.
 
 ```bash
 ./run.sh patterns              # all of them at once, each labelled, with motion trails
