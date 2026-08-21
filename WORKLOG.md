@@ -10,6 +10,11 @@ Last updated: 2026-08-21.
 
 ## 2026-08-21: the plateau is a promotion gate, not a learning ceiling
 
+**Numbering:** every "stage N" below is the **zero-based** index used by
+`curriculum_state.json` and `evaluation.jsonl`. The training log and the stage names
+are one-based rounds, so index 20 is `survival-v2-round-21`. Subtract one when reading
+the log, add one when reading the JSON.
+
 **The flat scores are two separate problems.** Within a stage the agent barely improves:
 fitting a trend to each stage's own evaluations gives +0.003 completion per 1,000 episodes
 against a per-evaluation noise of sigma ~= 0.035. Stage 16 of `ppo-v2-kl-0820-0044` got
