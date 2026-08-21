@@ -268,6 +268,7 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                          start_stage: int = 0, device: str = "auto",
                          settings: PPOTrainSettings | None = None,
                          learning_rate: float | None = None,
+                         ent_coef: float | None = None,
                          stop_when_mastered: bool = False,
                          encoder: str = "mlp") -> Path:
     """Train PPO until ``episodes`` additional vector episodes have completed."""
@@ -450,6 +451,14 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
         # be rebuilt and the live optimizer groups set for an override to take effect.
         set_effective_learning_rate(model, learning_rate)
         print(f"learning rate overridden to {learning_rate:g}", flush=True)
+
+    if ent_coef is not None:
+        # Unlike the Adam rate, SB3 reads `ent_coef` straight off the algorithm at every
+        # train() call, so assigning it is enough. Keep `settings` in step so the value is
+        # what a later --resume restores.
+        settings.ent_coef = float(ent_coef)
+        model.ent_coef = float(ent_coef)
+        print(f"entropy coefficient overridden to {ent_coef:g}", flush=True)
 
     effective_learning_rate = float(
         learning_rate if learning_rate is not None else settings.learning_rate)

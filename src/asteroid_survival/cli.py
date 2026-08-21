@@ -399,6 +399,9 @@ def main(argv: list[str] | None = None) -> int:
         "--learning-rate", type=float,
         help="override the Adam rate, keeping every other resumed setting")
     ppo_parser.add_argument("--gamma", type=float)
+    ppo_parser.add_argument(
+        "--ent-coef", type=float,
+        help="override the entropy bonus, keeping every other resumed setting")
     ppo_parser.add_argument("--target-kl", type=float)
     ppo_parser.add_argument("--n-epochs", type=int)
     ppo_parser.add_argument(
@@ -606,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
             resume=args.resume, initialize_from=args.initialize_from,
             start_stage=(args.start_stage - 1) if args.start_stage is not None else 0,
             device=args.device, learning_rate=args.learning_rate,
+            ent_coef=args.ent_coef,
             settings=ppo_settings, stop_when_mastered=args.stop_when_mastered,
             encoder=args.encoder)
         print(f"saved checkpoint: {checkpoint}")
