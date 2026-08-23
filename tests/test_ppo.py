@@ -344,3 +344,35 @@ def test_a_plateau_does_not_raise_the_bar_above_the_champion(tmp_path):
     assert tracker.state["episode"] == 250, "a collapsed clear rate must not install"
     assert tracker.state["completion_estimate"] <= installed + 1e-9, (
         "a reading the tracker refused to install must not become the standing bar")
+
+
+def test_live_play_controller_accepts_a_v5_checkpoint(monkeypatch):
+    """`showdown` must be able to drive a checkpoint carrying the v5 global block.
+
+    `PPOPlayController` read `max_teammates` and `global_features` in its manifest check and
+    again in `action`, but never assigned them, so a live showdown against any v5 checkpoint
+    raised AttributeError before drawing a frame. Every current checkpoint is v5.
+    """
+    from asteroid_survival.rl.environment import MOBILE_ACTIONS
+    from asteroid_survival.modes import build
+    from asteroid_survival.rl import ppo as ppo_module
+    from asteroid_survival.rl.controller import PPOPlayController
+
+    config, _ = build("survival-v2", 26, controllers=["human", "closest", "ppo"])
+    layout = {
+        "version": 5, "max_asteroids": config.asteroid.active_cap, "mobile": True,
+        "history_frames": 8, "history_long_frames": 8, "history_long_stride": 8,
+        "max_projectiles": 8, "max_teammates": 0, "global_features": 16,
+        "actions": [action.name for action in MOBILE_ACTIONS],
+    }
+
+    class _Stub:
+        def __init__(self, *args, **kwargs):
+            self.metadata = {"observation_layout": layout, "observation_size": 1251,
+                             "num_actions": len(MOBILE_ACTIONS), "recurrent": False}
+
+    monkeypatch.setattr(ppo_module, "PPOController", _Stub)
+    controller = PPOPlayController(config, "unused")
+    assert controller.global_features is True
+    assert controller.max_teammates == 0
+    assert len(controller.history_slots) == 16

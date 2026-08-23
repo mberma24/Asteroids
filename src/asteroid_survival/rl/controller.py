@@ -145,6 +145,11 @@ class PPOPlayController:
         history_long_frames = int(layout.get("history_long_frames", 0))
         history_long_stride = int(layout.get("history_long_stride", 8))
         self.max_projectiles = int(layout.get("max_projectiles", 0))
+        # Both of these are read below and in `action`, but were never assigned here, so a
+        # live showdown against any checkpoint carrying them raised AttributeError before it
+        # could draw a frame. Every v5 checkpoint carries the global block.
+        self.max_teammates = int(layout.get("max_teammates", 0))
+        self.global_features = int(layout.get("global_features", 0)) > 0
         self.history_slots = history_offsets(
             self.history_frames, history_long_frames, history_long_stride)
         self._history_depth = (max(self.history_slots) + 1) if self.history_slots else 0
