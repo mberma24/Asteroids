@@ -174,3 +174,30 @@ def test_varied_rounds_keep_most_rocks_at_full_difficulty():
         f"{len(slow) / len(speeds):.0%} of rocks are slow; wanted a minority")
     assert min(speeds) < stage.min_speed * 0.6, "no genuinely slow rock ever appeared"
     assert max(periods) > stage.wavelength_max * 2, "no genuinely slow oscillation appeared"
+
+
+def test_the_round26_bridge_lands_exactly_on_round_26():
+    """The bridge's last lesson must be round 26, or it bridges to somewhere else.
+
+    Every physical knob is pinned by hand, so a later edit to survival-v2 would silently
+    leave the bridge ramping toward a round that no longer exists as written. Only the large
+    asteroid fraction is meant to differ across the lessons.
+    """
+    from asteroid_survival.rl.curriculum import load_curriculum
+
+    bridge = load_curriculum("configs/rl-survival-v2-round26-bridge.toml")
+    target = load_curriculum("configs/rl-survival-v2.toml").stages[25]
+    final = bridge.stages[-1]
+
+    assert list(final.asteroid_size) == list(target.asteroid_size)
+    assert set(final.patterns) == set(target.patterns)
+    for field in ("min_speed", "max_speed", "amplitude_max", "wavelength_min",
+                  "wavelength_max", "spawn_interval", "spawn_spread", "max_seconds"):
+        assert getattr(final, field) == pytest.approx(getattr(target, field)), field
+    assert final.initial_asteroids == target.initial_asteroids
+
+    # A ramp, and only in the one dimension under test.
+    fractions = [sum(1 for s in st.asteroid_size if s == 3) / len(st.asteroid_size)
+                 for st in bridge.stages]
+    assert fractions == sorted(fractions)
+    assert fractions[0] > 0.25 and fractions[-1] == 0.5

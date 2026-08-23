@@ -1,0 +1,103 @@
+# A short transfer curriculum for the round-26 cliff in survival v2.
+#
+# Round 25 runs one large asteroid in four; round 26 doubles that to one in two, and large
+# rocks split. Nothing else moves: speed drifts under 2% and the pattern pool is unchanged.
+# The live policy sat 67,000 episodes on round 26 at a 0.60 clear rate with a slope of
+# +0.0006 per 1k, which is the same wall round 23 put up when it introduced splitting rocks
+# in one step. The round-23 bridge cleared that wall in 3,500 episodes after transfer, so
+# these four lessons walk the large fraction up instead of doubling it at once.
+#
+# Every physical knob is pinned at its round-26 value, so an evaluation here isolates the
+# one thing that changes: how much of the field splits when you shoot it.
+#
+# The round-26 champion, scored over 96 held-out episodes per rung, falls off almost
+# linearly in that one number and in nothing else:
+#
+#   large 0.250 (rounds 23, 24, 25)   clear 76.0%, 79.2%, 77.1%
+#   large 0.333 (lesson 2)            clear 72.9%
+#   large 0.400 (lesson 3)            clear 66.7%
+#   large 0.500 (lesson 4 = round 26) clear 61.5%
+#
+# Three consecutive rounds sharing 0.250 score the same within noise, so the ladder's other
+# knobs are not what stalled it; doubling the large fraction in one step costs about 16
+# points of clear rate, which is the whole gap to the 0.80 gate.
+[curriculum]
+base_config = "rl-arcade.toml"
+retention_sample = 10
+promotion_completion = 0.90
+promotion_clear_rate = 0.80
+retention_completion = 0.75
+retention_floor = 0.50
+promotion_accuracy = 0.05
+promotion_streak = 2
+promotion_window = 4
+current_stage_probability = 0.80
+evaluation_episodes = 64
+retention_evaluation_episodes = 8
+evaluation_panels = 4
+test_evaluation_episodes = 128
+observation_version = 5
+
+[reward]
+survival_bonus = 0.10
+round_clear = 10.0
+death_penalty = 5.0
+large = 0.6
+medium = 0.3
+small = 0.15
+miss_penalty = 0.02
+accuracy = 0.0
+wave_clear = 0.0
+fast_clear = 0.0
+active_time_penalty = 0.0
+timeout_penalty = 0.0
+time_scaled_survival = true
+safety_progress = 0.0
+
+[progression]
+rounds = 4
+name_prefix = "survival-v2-round26-bridge"
+survival = true
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 52.31575
+max_speed_start = 79.579
+amplitude_min_start = 3.158
+amplitude_max_start = 42.10525
+wavelength_min_start = 3.90525
+wavelength_max_start = 5.05275
+spawn_interval_start = 1.671
+spawn_spread_start = 131.579
+initial_asteroids_start = 11
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+no_hit_seconds_start = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02
+
+# The pattern pool is round 26's throughout: it is not what changed here.
+[[progression.phases]]
+until = 1
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "medium", "medium", "large", "large"]
+
+[[progression.phases]]
+until = 2
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large"]
+
+[[progression.phases]]
+until = 3
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "large", "large"]
+
+[[progression.phases]]
+until = 4
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large", "large"]
