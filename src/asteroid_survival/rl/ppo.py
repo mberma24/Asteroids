@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -247,6 +248,8 @@ class PPOTrainSettings:
     max_grad_norm: float = 0.5
     lstm_hidden_size: int = 256
     target_kl: float | None = None
+    entropy_floor: float | None = None
+    """Policy entropy in nats to hold by adapting `ent_coef`; None leaves it constant."""
 
 
 def set_effective_learning_rate(model, rate: float) -> None:
@@ -255,6 +258,128 @@ def set_effective_learning_rate(model, rate: float) -> None:
     model._setup_lr_schedule()
     for group in model.policy.optimizer.param_groups:
         group["lr"] = float(rate)
+
+
+class EntropyFloorController:
+    """Hold policy entropy near a target by adapting the entropy bonus between updates.
+
+    A fixed `ent_coef` has failed in both directions on this curriculum. At 0.01 entropy
+    pinned flat at 1.07 nats and the run stalled; at 0.0025 entropy fell monotonically and the
+    per-round clear slope decayed to zero in lockstep with it -- 0.711 nats while round 23 was
+    still learning at +0.0134 per 1k episodes, 0.588 by the time round 26 sat at +0.0000 over
+    112,500 episodes. A rung that was deliberately *easier* learned nothing either, so the
+    binding constraint is exploration rather than difficulty.
+
+    So the coefficient is a control input, not a constant. The loop only ever adds exploration
+    pressure: it is clamped below by the configured base, so enabling a floor can never leave a
+    run less explored than the same run without one.
+    """
+
+    EMA_ALPHA = 0.1
+    """~10-update horizon. At n_steps=256 across 8 envs that spans roughly 20k decisions --
+    long enough to reject per-rollout noise, short enough to react inside one eval interval,
+    and enough to absorb the step change in entropy that a curriculum promotion causes."""
+    DEADBAND = 0.05
+    MAX_MULTIPLE = 8.0
+    ABSOLUTE_MAX = 0.05
+    GAIN = 0.2
+    MAX_LOG_STEP = 0.05
+    """At most ~5% per update, so base to the ceiling takes ~42 updates. Fast enough to arrest
+    a collapse that took thousands of episodes, and far slower than the policy's own entropy
+    response -- outrunning that lag is the usual cause of a controller oscillating."""
+    WARMUP_UPDATES = 5
+
+    def __init__(self, base: float, floor: float, *, coefficient: float | None = None,
+                 smoothed: float | None = None, updates: int = 0):
+        self.base = float(base)
+        self.floor = float(floor)
+        self.ceiling = min(self.base * self.MAX_MULTIPLE, self.ABSOLUTE_MAX)
+        self.coefficient = self.base if coefficient is None else float(coefficient)
+        self.smoothed = None if smoothed is None else float(smoothed)
+        self.updates = int(updates)
+
+    def update(self, entropy: float, *, approx_kl: float | None = None,
+               target_kl: float | None = None) -> float:
+        """Fold in one update's measured entropy, in nats, and return the new coefficient."""
+        entropy = float(entropy)
+        self.smoothed = (entropy if self.smoothed is None
+                         else self.smoothed + self.EMA_ALPHA * (entropy - self.smoothed))
+        self.updates += 1
+        if self.updates <= self.WARMUP_UPDATES:
+            return self.coefficient          # seed the average before acting on it
+        error = max(-1.0, min(1.0, (self.floor - self.smoothed) / self.floor))
+        if abs(error) <= self.DEADBAND:
+            return self.coefficient
+        # Stay subordinate to the KL cap. SB3 truncates its epoch loop past 1.5 * target_kl,
+        # and pushing the policy toward uniform raises approx_kl directly, so climbing while
+        # already over target would buy exploration by cutting updates short -- which is the
+        # stall this exists to fix. Coming back down is always allowed.
+        if error > 0 and approx_kl is not None and target_kl and approx_kl > target_kl:
+            return self.coefficient
+        step = max(-self.MAX_LOG_STEP, min(self.MAX_LOG_STEP, self.GAIN * error))
+        self.coefficient = min(max(self.coefficient * math.exp(step), self.base), self.ceiling)
+        return self.coefficient
+
+    def state(self) -> dict:
+        return {"floor": self.floor, "base": self.base, "coefficient": self.coefficient,
+                "smoothed_entropy": self.smoothed, "updates": self.updates}
+
+
+def entropy_floor_controller(base: float, floor: float | None,
+                             restored: dict | None = None) -> EntropyFloorController | None:
+    """Build a controller, or None when no floor is in force.
+
+    A floor of zero is the documented way to switch one off, because the setting persists into
+    the checkpoint and would otherwise be sticky across every later resume.
+    """
+    if floor is None or float(floor) <= 0.0:
+        return None
+    controller = EntropyFloorController(base=base, floor=float(floor))
+    try:
+        # Only resume mid-flight state that belongs to this exact loop; a changed flag means
+        # the stored coefficient describes a different controller.
+        if (restored and float(restored["floor"]) == controller.floor
+                and float(restored["base"]) == controller.base):
+            controller.coefficient = min(max(float(restored["coefficient"]), controller.base),
+                                         controller.ceiling)
+            stored = restored.get("smoothed_entropy")
+            controller.smoothed = None if stored is None else float(stored)
+            controller.updates = int(restored.get("updates", 0))
+    except (TypeError, ValueError, KeyError):
+        return EntropyFloorController(base=base, floor=float(floor))
+    return controller
+
+
+def _update_record(values: dict, *, episode: int, steps: int, wall_seconds: float,
+                   learning_rate: float, ent_coef: float,
+                   controller: EntropyFloorController | None = None,
+                   target_kl: float | None = None) -> dict:
+    """One `ppo_updates.jsonl` line, applying the entropy floor if one is active."""
+    wanted = ("train/approx_kl", "train/clip_fraction", "train/entropy_loss",
+              "train/policy_gradient_loss", "train/value_loss",
+              "train/explained_variance", "train/loss")
+    record = {
+        "episode": episode, "environment_steps": int(steps),
+        "effective_learning_rate": float(learning_rate),
+        "wall_seconds": wall_seconds,
+    }
+    record.update({name.removeprefix("train/"): float(values[name])
+                   for name in wanted if name in values})
+    # SB3 logs entropy_loss as *negative* mean entropy, so flip it: everything downstream --
+    # the controller included -- works in positive nats.
+    entropy = (-float(values["train/entropy_loss"])
+               if "train/entropy_loss" in values else None)
+    if entropy is not None:
+        record["entropy"] = entropy
+    record["ent_coef"] = float(ent_coef)
+    if controller is not None and entropy is not None:
+        record["ent_coef"] = controller.update(
+            entropy, approx_kl=record.get("approx_kl"), target_kl=target_kl)
+        record.update({"entropy_floor": controller.floor,
+                       "entropy_coefficient_base": controller.base,
+                       "smoothed_entropy": controller.smoothed,
+                       "entropy_controller_updates": controller.updates})
+    return record
 
 
 def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
@@ -269,6 +394,7 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                          settings: PPOTrainSettings | None = None,
                          learning_rate: float | None = None,
                          ent_coef: float | None = None,
+                         entropy_floor: float | None = None,
                          stop_when_mastered: bool = False,
                          encoder: str = "mlp") -> Path:
     """Train PPO until ``episodes`` additional vector episodes have completed."""
@@ -460,6 +586,16 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
         model.ent_coef = float(ent_coef)
         print(f"entropy coefficient overridden to {ent_coef:g}", flush=True)
 
+    if entropy_floor is not None:
+        settings.entropy_floor = float(entropy_floor) if entropy_floor > 0 else None
+    entropy_controller = entropy_floor_controller(
+        base=float(settings.ent_coef), floor=settings.entropy_floor,
+        restored=(resume_metadata or {}).get("entropy_controller"))
+    if entropy_controller is not None:
+        model.ent_coef = entropy_controller.coefficient
+        print(f"entropy floor {entropy_controller.floor:g} nats; coefficient adapts in "
+              f"[{entropy_controller.base:g}, {entropy_controller.ceiling:g}]", flush=True)
+
     effective_learning_rate = float(
         learning_rate if learning_rate is not None else settings.learning_rate)
 
@@ -510,6 +646,11 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                 "observation_layout": layout, "settings": asdict(settings),
                 "configured_learning_rate": settings.learning_rate,
                 "effective_learning_rate": effective_learning_rate,
+                # `train-forever.sh` re-execs with RESUME= on every restart, so the live
+                # coefficient has to survive one. Without this each restart would drop back
+                # to base and start collapsing again.
+                "entropy_controller": (None if entropy_controller is None
+                                       else entropy_controller.state()),
                 "parent_checkpoint": str(initialize_from) if initialize_from else None,
                 "parallel_envs": n_envs, "device": str(device),
                 "wall_seconds": time.monotonic() - started,
@@ -613,14 +754,16 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                       "train/explained_variance", "train/loss")
             if not any(name in values for name in wanted):
                 return
-            record = {
-                "episode": self.episode, "environment_steps": int(self.num_timesteps),
-                "effective_learning_rate": float(
-                    self.model.policy.optimizer.param_groups[0]["lr"]),
-                "wall_seconds": time.monotonic() - started,
-            }
-            record.update({name.removeprefix("train/"): float(values[name])
-                           for name in wanted if name in values})
+            record = _update_record(
+                values, episode=self.episode, steps=int(self.num_timesteps),
+                wall_seconds=time.monotonic() - started,
+                learning_rate=float(self.model.policy.optimizer.param_groups[0]["lr"]),
+                ent_coef=float(self.model.ent_coef), controller=entropy_controller,
+                target_kl=settings.target_kl)
+            if entropy_controller is not None:
+                # SB3 re-reads this at every train() call, so assigning it here -- on the
+                # rollout end that immediately precedes the update -- takes effect at once.
+                self.model.ent_coef = record["ent_coef"]
             with (destination / "ppo_updates.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(record) + "\n")
 

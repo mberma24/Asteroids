@@ -376,3 +376,148 @@ def test_live_play_controller_accepts_a_v5_checkpoint(monkeypatch):
     assert controller.global_features is True
     assert controller.max_teammates == 0
     assert len(controller.history_slots) == 16
+
+
+def _floor(base=0.0025, floor=0.8, **kwargs):
+    from asteroid_survival.rl.ppo import EntropyFloorController
+
+    return EntropyFloorController(base=base, floor=floor, **kwargs)
+
+
+def test_entropy_floor_raises_the_coefficient_below_target():
+    """The measured collapse: entropy sat near 0.55 nats while learning was dead."""
+    controller = _floor()
+    seen = [controller.update(0.55) for _ in range(60)]
+    assert seen == sorted(seen), "the coefficient must not wander while entropy is low"
+    assert controller.coefficient > 4 * controller.base
+    assert controller.coefficient <= controller.ceiling
+
+
+def test_entropy_floor_returns_to_base_but_never_below():
+    """Enabling a floor must never leave a run less explored than the same run without one."""
+    controller = _floor()
+    for _ in range(60):
+        controller.update(0.55)
+    raised = controller.coefficient
+    seen = [controller.update(1.2) for _ in range(400)]
+    assert seen == sorted(seen, reverse=True)
+    assert raised > controller.base
+    assert controller.coefficient == pytest.approx(controller.base)
+
+
+def test_entropy_floor_step_is_bounded():
+    """The anti-oscillation contract: no single update may move the coefficient far."""
+    import math
+
+    controller = _floor()
+    for _ in range(controller.WARMUP_UPDATES + 1):
+        controller.update(0.8)
+    before = controller.coefficient
+    controller.update(0.0)                     # maximal error
+    assert controller.coefficient / before <= math.exp(controller.MAX_LOG_STEP) + 1e-12
+
+
+def test_entropy_floor_is_quiet_inside_the_deadband():
+    controller = _floor()
+    for _ in range(10):
+        controller.update(0.8)
+    settled = controller.coefficient
+    for index in range(100):
+        controller.update(0.79 if index % 2 else 0.82)
+    assert controller.coefficient == pytest.approx(settled)
+
+
+def test_entropy_floor_stays_subordinate_to_the_kl_cap():
+    """Buying exploration by driving SB3 to truncate its epoch loop is the stall, not the fix."""
+    controller = _floor()
+    for _ in range(10):
+        controller.update(0.8)
+    settled = controller.coefficient
+
+    for _ in range(20):
+        controller.update(0.5, approx_kl=0.03, target_kl=0.02)
+    assert controller.coefficient == pytest.approx(settled), "must not climb while over target"
+
+    controller.update(0.5, approx_kl=0.010, target_kl=0.02)
+    assert controller.coefficient > settled, "must climb once KL is back under target"
+
+    raised = controller.coefficient
+    for _ in range(60):                        # lift the average clear of the floor first
+        controller.update(1.5, approx_kl=0.03, target_kl=0.02)
+    assert controller.coefficient < raised, "coming back down is always allowed"
+
+
+def test_entropy_floor_converges_without_oscillating():
+    """Closed loop against a toy monotone plant, seeded at the observed dead level."""
+    import math
+
+    controller = _floor()
+    entropy, history = 0.55, []
+    for _ in range(1500):
+        coefficient = controller.update(entropy)
+        entropy += 0.02 * (10.0 * math.sqrt(coefficient) - entropy)
+        history.append(coefficient)
+    assert controller.smoothed == pytest.approx(controller.floor, rel=0.10)
+    tail = history[-100:]
+    assert (max(tail) - min(tail)) / max(tail) < 0.05, "the coefficient must settle, not ring"
+
+
+def test_update_record_flips_the_sb3_entropy_sign():
+    """SB3 logs entropy_loss as negative mean entropy; unflipped it pins the controller."""
+    from asteroid_survival.rl.ppo import _update_record
+
+    controller = _floor()
+    values = {"train/entropy_loss": -0.62, "train/approx_kl": 0.016}
+    record = _update_record(values, episode=100, steps=2048, wall_seconds=1.0,
+                            learning_rate=5e-5, ent_coef=0.0025, controller=controller,
+                            target_kl=0.02)
+    assert record["entropy"] == pytest.approx(0.62)
+    assert record["ent_coef"] == pytest.approx(controller.coefficient)
+    assert record["entropy_floor"] == pytest.approx(0.8)
+    assert "smoothed_entropy" in record and "entropy_coefficient_base" in record
+
+
+def test_update_record_still_logs_the_coefficient_without_a_floor():
+    """Constant-coefficient runs need the same columns, or the two cannot be compared."""
+    from asteroid_survival.rl.ppo import _update_record
+
+    record = _update_record({"train/entropy_loss": -0.62}, episode=1, steps=8,
+                            wall_seconds=0.5, learning_rate=5e-5, ent_coef=0.0025)
+    assert record["entropy"] == pytest.approx(0.62)
+    assert record["ent_coef"] == pytest.approx(0.0025)
+    assert "entropy_floor" not in record
+
+
+def test_entropy_floor_is_opt_in():
+    from asteroid_survival.rl.ppo import entropy_floor_controller
+
+    assert entropy_floor_controller(base=0.0025, floor=None) is None
+    assert entropy_floor_controller(base=0.0025, floor=0.0) is None
+    assert entropy_floor_controller(base=0.0025, floor=0.8).coefficient == pytest.approx(0.0025)
+
+
+def test_entropy_floor_restores_only_its_own_state():
+    from asteroid_survival.rl.ppo import entropy_floor_controller
+
+    stored = {"floor": 0.8, "base": 0.0025, "coefficient": 0.012,
+              "smoothed_entropy": 0.61, "updates": 400}
+    resumed = entropy_floor_controller(base=0.0025, floor=0.8, restored=stored)
+    assert resumed.coefficient == pytest.approx(0.012)
+    assert resumed.smoothed == pytest.approx(0.61)
+
+    # A changed flag means the stored coefficient describes a different controller.
+    moved = entropy_floor_controller(base=0.0025, floor=1.2, restored=stored)
+    assert moved.coefficient == pytest.approx(0.0025)
+    assert entropy_floor_controller(base=0.0025, floor=0.8,
+                                    restored={"floor": "bad"}).coefficient == pytest.approx(0.0025)
+
+
+def test_entropy_floor_round_trips_through_settings():
+    from dataclasses import asdict
+
+    from asteroid_survival.rl.ppo import PPOTrainSettings
+
+    stored = asdict(PPOTrainSettings(entropy_floor=0.8))
+    assert PPOTrainSettings(**stored).entropy_floor == pytest.approx(0.8)
+    old = {k: v for k, v in asdict(PPOTrainSettings()).items() if k != "entropy_floor"}
+    assert PPOTrainSettings(**old).entropy_floor is None

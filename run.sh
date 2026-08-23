@@ -342,6 +342,7 @@ cmd_train_ppo() {     # train PPO without tree search or replay
   [ -n "${PPO_GAMMA:-}" ] && args+=(--gamma "$PPO_GAMMA")
   [ -n "${PPO_TARGET_KL:-}" ] && args+=(--target-kl "$PPO_TARGET_KL")
   [ -n "${PPO_ENT_COEF:-}" ] && args+=(--ent-coef "$PPO_ENT_COEF")
+  [ -n "${PPO_ENTROPY_FLOOR:-}" ] && args+=(--entropy-floor "$PPO_ENTROPY_FLOOR")
   [ -n "${PPO_N_EPOCHS:-}" ] && args+=(--n-epochs "$PPO_N_EPOCHS")
   [ -n "${ENCODER:-}" ] && args+=(--encoder "$ENCODER")
   [ "${STOP_WHEN_MASTERED:-0}" = "1" ] && args+=(--stop-when-mastered)
@@ -923,6 +924,7 @@ Overrides (environment variables)
   EVAL_EVERY=500    held-out evaluation interval
   PPO_DEVICE=cpu    override PPO device (auto, cpu, or mps)
   PPO_ENT_COEF=0.0025 entropy bonus for PPO, including initialized/resumed runs
+  PPO_ENTROPY_FLOOR=0.8 hold PPO entropy near N nats by adapting the entropy bonus
   FOLLOW_EVERY=15   seconds between `follow` polls
   FORK_SEEDS=24     seeds per probe when measuring a fork rung
   ALLOW_CONCURRENT=1 bypass the trainer process guard
