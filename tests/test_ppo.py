@@ -124,10 +124,12 @@ def _tracker(tmp_path, patience=2):
         accuracy_targets=(0.05,) * 60)
 
 
-def _record(episode, stage, completion, accuracy=0.5, prior=1.0):
-    stages = [{"completion_rate": prior, "mean_accuracy": accuracy, "episodes": 8}
+def _record(episode, stage, completion, accuracy=0.5, prior=1.0, clear=1.0):
+    stages = [{"completion_rate": prior, "clear_rate": clear,
+               "mean_accuracy": accuracy, "episodes": 8}
               for _ in range(stage)]
-    stages.append({"completion_rate": completion, "mean_accuracy": accuracy,
+    stages.append({"completion_rate": completion, "clear_rate": clear,
+                   "mean_accuracy": accuracy,
                    "episodes": 96})
     return {"episode": episode, "training_stage": stage, "stages": stages}
 
@@ -147,6 +149,7 @@ def test_one_lucky_evaluation_does_not_crown_a_champion(tmp_path):
     """
     tracker = _tracker(tmp_path)
     tracker.consider(_record(250, 40, 0.60), _checkpoint(tmp_path, 250), allow_recovery=True)
+    assert tracker.state["clear_rate"] == pytest.approx(1.0)
     baseline = tracker.state["completion_estimate"]
 
     # One outlier, then the true level reasserts itself.
@@ -283,3 +286,61 @@ def test_set_encoder_refuses_a_layout_it_does_not_match():
             spaces.Box(-np.inf, np.inf, (1235,), np.float32), ship_features=11,
             asteroid_slots=25, asteroid_features=44,
             projectile_slots=8, projectile_features=10)
+
+
+def test_a_stalled_stage_still_advances_its_champion(tmp_path):
+    """A run stuck below the promotion bar must still track its best policy.
+
+    The same-stage gate used to require `promotion_clear_rate`. On a stage the run stalled
+    below -- exactly where the champion matters, because it is the fork point and the
+    artifact `versus` and `play` resolve to -- no evaluation could ever pass it, so the
+    policy installed on arrival stayed champion forever. A real run sat 60,000 episodes on
+    a champion whose clear rate was 0.55 while the live policy was reaching 0.73.
+    """
+    from asteroid_survival.rl.ppo_support import PPOChampionTracker
+
+    tracker = PPOChampionTracker(
+        tmp_path, retention_completion=0.75, patience=2, learning_rate=3e-4,
+        minimum_learning_rate=1e-4, promotion_completion=0.90,
+        accuracy_targets=(0.05,) * 60, clear_target=0.80)
+
+    tracker.consider(_record(40000, 25, 0.78, clear=0.55),
+                     _checkpoint(tmp_path, 40000), allow_recovery=True)
+    assert tracker.state["episode"] == 40000
+
+    # Sustained, and better than the incumbent -- but never at the 0.80 promotion bar.
+    for episode in (40500, 41000, 41500, 42000):
+        tracker.consider(_record(episode, 25, 0.86, clear=0.73),
+                         _checkpoint(tmp_path, episode), allow_recovery=True)
+
+    assert tracker.state["episode"] > 40000, (
+        "a stage stalled under the promotion bar froze its champion permanently")
+    assert tracker.state["clear_rate"] == pytest.approx(0.73)
+
+
+def test_a_plateau_does_not_raise_the_bar_above_the_champion(tmp_path):
+    """The estimate is the champion's own level, not the best reading ever seen.
+
+    Ratcheting it upward on every plateau built a bar the champion itself could not clear,
+    so the longer a run stalled the harder installing a *better* policy became.
+    """
+    from asteroid_survival.rl.ppo_support import PPOChampionTracker
+
+    tracker = PPOChampionTracker(
+        tmp_path, retention_completion=0.75, patience=2, learning_rate=3e-4,
+        minimum_learning_rate=1e-4, promotion_completion=0.90,
+        accuracy_targets=(0.05,) * 60, clear_target=0.80)
+    tracker.consider(_record(250, 40, 0.78, clear=0.75),
+                     _checkpoint(tmp_path, 250), allow_recovery=True)
+    installed = tracker.state["completion_estimate"]
+
+    # Clear rate collapses, so no install is allowed; retention on earlier stages still
+    # holds, so the plateau counter runs to patience. It was then raising the completion bar
+    # on readings it had just refused to install.
+    for episode in (500, 750, 1000, 1250):
+        tracker.consider(_record(episode, 40, 0.95, clear=0.40),
+                         _checkpoint(tmp_path, episode), allow_recovery=True)
+
+    assert tracker.state["episode"] == 250, "a collapsed clear rate must not install"
+    assert tracker.state["completion_estimate"] <= installed + 1e-9, (
+        "a reading the tracker refused to install must not become the standing bar")

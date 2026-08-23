@@ -34,12 +34,21 @@ newest_complete() {
 checkpoint="$(newest_complete)"
 if [ -n "$checkpoint" ]; then
   echo "== resuming $checkpoint =="
-  exec env OUTPUT="$RUN" RESUME="$checkpoint" ./run.sh train-ppo "$EPISODES"
+  # Clear the fork-time variables. A drop-in that sets INITIALIZE_FROM/START_STAGE to
+  # seed the *first* launch stays in the environment forever, and run.sh turns both into
+  # flags, so a resume would pass --resume and --initialize-from together, which the CLI
+  # rejects. Without this the service crash-loops as soon as the run has a checkpoint.
+  exec env -u INITIALIZE_FROM -u START_STAGE \
+    OUTPUT="$RUN" RESUME="$checkpoint" ./run.sh train-ppo "$EPISODES"
 fi
 
 if [ -d "$SOURCE" ]; then
-  echo "== forking from $SOURCE (rung is measured) =="
-  exec env OUTPUT="$RUN" INITIALIZE_FROM="$SOURCE" ./run.sh train-ppo-survival-v2 "$EPISODES"
+  if [ "$CURRICULUM" = "configs/rl-survival-v2.toml" ] && [ -z "${START_STAGE:-}" ]; then
+    echo "== forking from $SOURCE (rung is measured) =="
+    exec env OUTPUT="$RUN" INITIALIZE_FROM="$SOURCE" ./run.sh train-ppo-survival-v2 "$EPISODES"
+  fi
+  echo "== forking from $SOURCE into $CURRICULUM at stage ${START_STAGE:-1} =="
+  exec env OUTPUT="$RUN" INITIALIZE_FROM="$SOURCE" ./run.sh train-ppo "$EPISODES"
 fi
 
 echo "== no checkpoint and no source policy: starting the ladder at round 1 =="

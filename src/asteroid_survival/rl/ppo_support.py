@@ -193,14 +193,24 @@ class PPOChampionTracker:
         """
         stage = self._stage_of(record)
         window = self.state.get("window") or []
+        clears = self.state.get("clear_window") or []
         if int(self.state.get("window_stage", -1)) != stage:
-            window = []
+            window, clears = [], []
         stages = record.get("stages") or [{}]
         window.append(float(stages[stage].get("completion_rate", 0.0)))
-        window = window[-SMOOTHING_WINDOW:]
+        # Clear rate is smoothed over the same window as completion. It used to be read from
+        # the single latest evaluation, which is the max-selection bias this window exists to
+        # prevent -- applied to the one metric it was not protecting.
+        clears.append(float(stages[stage].get("clear_rate", 0.0)))
+        window, clears = window[-SMOOTHING_WINDOW:], clears[-SMOOTHING_WINDOW:]
         self.state["window"] = window
+        self.state["clear_window"] = clears
         self.state["window_stage"] = stage
         return statistics.fmean(window)
+
+    def _smoothed_clear(self) -> float:
+        clears = self.state.get("clear_window") or []
+        return statistics.fmean(clears) if clears else 0.0
 
     def _smoothed_better(self, record: dict, smoothed: float) -> bool:
         """Whether this really is a better policy, rather than a luckier evaluation."""
@@ -210,8 +220,12 @@ class PPOChampionTracker:
             return stage > champion_stage        # a promotion always installs
         if len(self.state.get("window") or []) < SMOOTHING_WINDOW:
             return False                          # not enough evidence yet
-        current = (record.get("stages") or [{}])[stage]
-        if self.clear_target and float(current.get("clear_rate", 0.0)) < self.clear_target:
+        # Beat the incumbent, not the promotion bar. Requiring `promotion_clear_rate` here
+        # froze the champion on any stage the run stalled below it: the policy installed on
+        # arrival -- the weakest one that stage will ever see -- stayed champion forever,
+        # which is exactly when tracking the best one matters most. Promotion already owns
+        # the absolute bar, and `_eligible` separately guards the earlier stages.
+        if self._smoothed_clear() < float(self.state.get("clear_estimate", 0.0)):
             return False
         return smoothed > float(self.state.get("completion_estimate", 0.0))
 
@@ -232,6 +246,7 @@ class PPOChampionTracker:
             "episode": int(record["episode"]), "training_stage": index,
             "score": list(self._record_score(record)),
             "completion_rate": float(stage.get("completion_rate", 0.0)),
+            "clear_rate": float(stage.get("clear_rate", 0.0)),
             "accuracy": float(stage.get("mean_accuracy", 0.0)),
             "evaluations_since_improvement": 0, "retention_failures": 0,
             "recoveries": int(old.get("recoveries", 0)),
@@ -280,16 +295,21 @@ class PPOChampionTracker:
         if not self.state:
             self._install(checkpoint, record)
             self._observe(record)
-            self.state["completion_estimate"] = float(
-                (record.get("stages") or [{}])[self._stage_of(record)].get(
-                    "completion_rate", 0.0))
+            current = (record.get("stages") or [{}])[self._stage_of(record)]
+            self.state["completion_estimate"] = float(current.get("completion_rate", 0.0))
+            # Seed the clear bar here too. Left unset it defaults to zero, and the very gate
+            # that keeps a champion from being replaced by a worse one never engages.
+            self.state["clear_estimate"] = float(current.get("clear_rate", 0.0))
             self.save()
             return "improved"
         if self._eligible(record) and self._smoothed_better(record, smoothed):
             window, window_stage = self.state.get("window"), self.state.get("window_stage")
+            clears = self.state.get("clear_window")
             self._install(checkpoint, record)
             self.state["window"], self.state["window_stage"] = window, window_stage
+            self.state["clear_window"] = clears
             self.state["completion_estimate"] = smoothed
+            self.state["clear_estimate"] = self._smoothed_clear()
             self.save()
             return "improved"
         self.state["evaluations_since_improvement"] = int(
@@ -312,8 +332,10 @@ class PPOChampionTracker:
             # a rollout buffer produced by a different policy and invalidates the update.
             # The protected champion remains a serving artifact; rollback is an explicit
             # new run initialized from champion, never an in-place training action.
-            self.state["completion_estimate"] = max(
-                smoothed, float(self.state.get("completion_estimate", 0.0)))
+            # The estimate stays the champion's own level. Raising it to the best reading
+            # ever seen built a bar the champion itself could not clear, so a long plateau
+            # made installing a *better* policy progressively harder -- the phantom-champion
+            # failure this smoothing was added to prevent, arriving by the opposite route.
         self.save()
         return "continue"
 
