@@ -1,0 +1,87 @@
+# A short transfer curriculum for the round-23 cliff in survival v2.
+#
+# Round 22 has six curved trajectories and only medium asteroids. Round 23 changes to all
+# eleven trajectories and introduces splitting large asteroids at the same time. The live
+# policy plateaued for 35,000 episodes after that combined jump. These four lessons hold
+# round-23 speed and density fixed while introducing the two mechanics separately.
+[curriculum]
+base_config = "rl-arcade.toml"
+retention_sample = 10
+promotion_completion = 0.90
+promotion_clear_rate = 0.80
+retention_completion = 0.75
+retention_floor = 0.50
+promotion_accuracy = 0.05
+promotion_streak = 2
+promotion_window = 4
+current_stage_probability = 0.80
+evaluation_episodes = 64
+retention_evaluation_episodes = 8
+evaluation_panels = 4
+test_evaluation_episodes = 128
+observation_version = 5
+
+[reward]
+survival_bonus = 0.10
+round_clear = 10.0
+death_penalty = 5.0
+large = 0.6
+medium = 0.3
+small = 0.15
+miss_penalty = 0.02
+accuracy = 0.0
+wave_clear = 0.0
+fast_clear = 0.0
+active_time_penalty = 0.0
+timeout_penalty = 0.0
+time_scaled_survival = true
+safety_progress = 0.0
+
+[progression]
+rounds = 4
+name_prefix = "survival-v2-round23-bridge"
+survival = true
+movement_enabled = true
+ship_invulnerable = false
+
+# Keep every physical difficulty knob at its round-23 value. Only trajectory variety and
+# asteroid splitting change, so an evaluation tells us which lesson was learned.
+min_speed_start = 49.15786
+max_speed_start = 74.58952
+amplitude_min_start = 2.77904
+amplitude_max_start = 37.05262
+wavelength_min_start = 4.01262
+wavelength_max_start = 5.16642
+spawn_interval_start = 1.71048
+spawn_spread_start = 136.18952
+initial_asteroids_start = 11
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+no_hit_seconds_start = 0.0
+promotion_accuracy = 0.05
+miss_penalty = 0.02
+
+[[progression.phases]]
+until = 1
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight"]
+linear_probability = 0.111111
+asteroid_size = "medium"
+
+[[progression.phases]]
+until = 2
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "medium"
+
+[[progression.phases]]
+until = 3
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "medium", "medium", "medium", "medium", "large"]
+
+[[progression.phases]]
+until = 4
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "large"]

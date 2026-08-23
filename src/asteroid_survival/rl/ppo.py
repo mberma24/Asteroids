@@ -574,6 +574,7 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                 time.monotonic() - started, 1e-6)
             print(f"  PPO eval @ {self.episode}: stage {evaluated_stage + 1} "
                   f"completion {current['completion_rate']:.1%}, "
+                  f"clear {current['clear_rate']:.1%}, "
                   f"accuracy {current['mean_accuracy']:.3f}, {rate:.0f} decisions/s" +
                   (f" - PROMOTED to stage {manager.stage + 1}" if promoted else ""),
                   flush=True)

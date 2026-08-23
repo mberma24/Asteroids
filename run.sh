@@ -341,6 +341,7 @@ cmd_train_ppo() {     # train PPO without tree search or replay
   [ -n "${LEARNING_RATE:-}" ] && args+=(--learning-rate "$LEARNING_RATE")
   [ -n "${PPO_GAMMA:-}" ] && args+=(--gamma "$PPO_GAMMA")
   [ -n "${PPO_TARGET_KL:-}" ] && args+=(--target-kl "$PPO_TARGET_KL")
+  [ -n "${PPO_ENT_COEF:-}" ] && args+=(--ent-coef "$PPO_ENT_COEF")
   [ -n "${PPO_N_EPOCHS:-}" ] && args+=(--n-epochs "$PPO_N_EPOCHS")
   [ -n "${ENCODER:-}" ] && args+=(--encoder "$ENCODER")
   [ "${STOP_WHEN_MASTERED:-0}" = "1" ] && args+=(--stop-when-mastered)
@@ -699,9 +700,11 @@ PYEOF
       $PY - "$dir/champion_state.json" <<'PYEOF'
 import json, sys
 s = json.load(open(sys.argv[1]))
-print("champion: episode {} | stage {} | completion {:.1%} | accuracy {:.3f} | recoveries {} | retention alerts {}/{}".format(
+clear = s.get("clear_rate")
+clear_detail = "" if clear is None else " | clear {:.1%}".format(clear)
+print("champion: episode {} | stage {} | completion {:.1%}{} | accuracy {:.3f} | recoveries {} | retention alerts {}/{}".format(
     s.get("episode", 0), int(s.get("training_stage", 0)) + 1,
-    s.get("completion_rate", 0), s.get("accuracy", 0), s.get("recoveries", 0),
+    s.get("completion_rate", 0), clear_detail, s.get("accuracy", 0), s.get("recoveries", 0),
     s.get("retention_failures", 0), s.get("patience", 4)))
 print("champion restorations: {}".format(s.get("restorations", 0)))
 if s.get("rollbacks", 0):
@@ -717,8 +720,11 @@ for line in sys.stdin:
     if "stages" in r:
         index = min(r.get("training_stage", 0), len(r["stages"]) - 1)
         s = r["stages"][index]
-        print("  ep {:>6}  stage {}  completion {:6.1%}  waves {:4.1f}  accuracy {:.3f}".format(
-              episode, index + 1, s["completion_rate"], s["mean_wave"], s["mean_accuracy"]))
+        clear = s.get("clear_rate")
+        clear_detail = "" if clear is None else "  clear {:6.1%}".format(clear)
+        print("  ep {:>6}  stage {}  completion {:6.1%}{}  waves {:4.1f}  accuracy {:.3f}".format(
+              episode, index + 1, s["completion_rate"], clear_detail,
+              s["mean_wave"], s["mean_accuracy"]))
         continue
     survival = r["mean_survival_time"]
     kills = r["mean_asteroids_destroyed"]
@@ -787,6 +793,11 @@ def describe(record, previous):
     if completion is not None:
         gap = "" if target is None else f" of {target:.0%}"
         line += f"  completion {completion:6.1%}{gap}"
+    clear = stage.get("clear_rate")
+    if clear is not None:
+        clear_target = record.get("promotion_clear_rate_target")
+        gap = "" if clear_target is None else f" of {clear_target:.0%}"
+        line += f"  clear {clear:6.1%}{gap}"
     if stage.get("mean_survival_time") is not None:
         line += f"  survival {stage['mean_survival_time']:5.1f}s"
     if stage.get("mean_accuracy") is not None:
@@ -911,6 +922,7 @@ Overrides (environment variables)
   START_STAGE=5     one-based curriculum stage for a continuation
   EVAL_EVERY=500    held-out evaluation interval
   PPO_DEVICE=cpu    override PPO device (auto, cpu, or mps)
+  PPO_ENT_COEF=0.0025 entropy bonus for PPO, including initialized/resumed runs
   FOLLOW_EVERY=15   seconds between `follow` polls
   FORK_SEEDS=24     seeds per probe when measuring a fork rung
   ALLOW_CONCURRENT=1 bypass the trainer process guard

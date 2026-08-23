@@ -21,6 +21,30 @@ def test_survival_v2_has_96_rounds_and_uses_every_pattern_after_28():
                for i in range(95))
 
 
+def test_round_23_bridge_separates_new_patterns_from_large_asteroids():
+    bridge = load_curriculum("configs/rl-survival-v2-round23-bridge.toml")
+    target = load_curriculum("configs/rl-survival-v2.toml").stages[22]
+
+    assert len(bridge.stages) == 4
+    assert bridge.observation_version == 5
+    assert bridge.promotion_completion == pytest.approx(0.90)
+    assert bridge.promotion_clear_rate == pytest.approx(0.80)
+    assert [len(stage.patterns) for stage in bridge.stages] == [8, 11, 11, 11]
+    assert bridge.stages[0].asteroid_size == 2
+    assert bridge.stages[1].asteroid_size == 2
+    assert bridge.stages[2].asteroid_size == [2, 2, 2, 2, 2, 2, 2, 3]
+    assert bridge.stages[3].asteroid_size == [2, 2, 2, 3]
+
+    # The last lesson is exactly round 23 on every physical and motion-distribution knob.
+    final = bridge.stages[-1]
+    for name in ("min_speed", "max_speed", "amplitude_min", "amplitude_max",
+                 "wavelength_min", "wavelength_max", "spawn_interval", "spawn_spread",
+                 "initial_asteroids", "linear_probability"):
+        assert getattr(final, name) == pytest.approx(getattr(target, name))
+    assert final.asteroid_size == target.asteroid_size
+    assert final.patterns == target.patterns
+
+
 def test_v5_appends_sixteen_global_threat_features():
     spec = load_curriculum("configs/rl-survival-v2.toml")
     stage = spec.stages[0]
