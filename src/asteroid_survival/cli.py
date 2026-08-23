@@ -569,11 +569,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compare":
         from .rl.comparison import compare, format_table
         target = args.config
+        env_settings: dict = {}
         if args.mode:
-            target, label = build_mode(args.mode, args.round, controllers=["closest"])
+            from .modes import round_env_settings
+
+            target, label = build_mode(args.mode, args.round, controllers=["closest"],
+                                       scoring=True)
+            env_settings = round_env_settings(args.mode, args.round)
             print(f"scoring {label}")
         report = compare(
             target, args.output, checkpoint=args.checkpoint, checkpoints=args.models,
+            env_settings=env_settings,
             include_greedy=not args.no_greedy, include_pilot=not args.no_pilot,
             episodes=args.episodes,
             seed=args.seed, max_decisions=args.max_decisions,

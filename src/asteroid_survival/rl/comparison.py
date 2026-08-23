@@ -27,14 +27,16 @@ REPORTED = ("survival_time", "wave", "asteroids_destroyed", "accuracy", "shots_f
 def _make_env(config: GameConfig, max_decisions: int, asteroid_reward: float,
               shot_penalty: float, history_frames: int = 0, history_long_frames: int = 0,
               history_long_stride: int = 8, max_projectiles: int = 8,
-              global_features: bool = False) -> AsteroidsRLEnv:
+              global_features: bool = False, completion: str = "waves",
+              no_hit_seconds: float = 0.0) -> AsteroidsRLEnv:
     return AsteroidsRLEnv(config, frame_skip=4, max_decisions=max_decisions,
                           asteroid_reward=asteroid_reward, shot_penalty=shot_penalty,
                           history_frames=history_frames,
                           history_long_frames=history_long_frames,
                           history_long_stride=history_long_stride,
                           max_projectiles=max_projectiles,
-                          global_features=global_features)
+                          global_features=global_features,
+                          completion=completion, no_hit_seconds=no_hit_seconds)
 
 
 def run_policy(env: AsteroidsRLEnv, policy: Callable[[Any], int], seeds: list[int]) -> list[dict]:
@@ -238,13 +240,17 @@ def compare(config_path: str | Path | GameConfig, output_path: str | Path, *,
             shot_penalty: float = 0.0, history_frames: int = 0,
             history_long_frames: int = 0, history_long_stride: int = 8,
             include_human: bool = True, include_greedy: bool = True,
-            include_pilot: bool = True) -> dict:
+            include_pilot: bool = True, env_settings: dict | None = None) -> dict:
     config = config_path if isinstance(config_path, GameConfig) else load_config(config_path)
     seeds = list(range(seed, seed + episodes))
     env_kwargs = {"max_decisions": max_decisions, "asteroid_reward": asteroid_reward,
                   "shot_penalty": shot_penalty, "history_frames": history_frames,
                   "history_long_frames": history_long_frames,
                   "history_long_stride": history_long_stride}
+    # A curriculum round carries its own ending rule and decision budget. Without them the
+    # environment falls back to wave completion, and every survival round scores as a
+    # zero clear rate no matter how long the contender lasts.
+    env_kwargs.update(env_settings or {})
     played: dict[str, list[dict]] = {}
 
     entries = list(checkpoints or [])

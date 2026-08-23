@@ -2458,3 +2458,34 @@ def test_idling_cannot_reach_the_gate_under_the_survival_metric():
         assert fraction < spec.promotion_completion - 0.10, (
             f"round {index + 1}: idling scores {fraction:.0%} against a "
             f"{spec.promotion_completion:.0%} gate")
+
+
+def test_scoring_a_survival_round_can_report_a_clear():
+    """`compare` must score a survival round the way training does.
+
+    The environment defaults to wave completion, and `modes.build` caps a survival round
+    with an objective step limit so a human stops where training scores. Together those made
+    `completed_stage` structurally impossible in `compare`, `watch`, and `versus`: the game
+    ended one moment before the decision-limit truncation that sets `survived_to_limit`, so
+    every survival round reported a zero clear rate however long a contender lasted.
+    """
+    from asteroid_survival.rl.comparison import compare
+    from asteroid_survival.modes import build, round_env_settings
+
+    settings = round_env_settings("survival-v2", 1)
+    assert settings["completion"] == "survival"
+
+    config, _ = build("survival-v2", 1, controllers=["closest"], scoring=True)
+    assert config.objective.max_steps is None, "an objective cap preempts survived_to_limit"
+
+    output = Path(__file__).parent / "_survival_clear.json"
+    # `max_decisions` here is the generic default a caller would pass; the round's own
+    # budget in `settings` has to win, or the truncation that sets the flag never fires.
+    report = compare(config, output, checkpoints=[], episodes=2, seed=4242,
+                     max_decisions=900, include_human=False, include_pilot=False,
+                     env_settings=settings)
+    episodes = report["episodes"]["greedy"]
+    assert all(e["completed_stage"] for e in episodes), (
+        "round 1 is trivial for greedy; a zero clear rate here means the scoring "
+        "environment is not the one training used")
+    output.unlink(missing_ok=True)

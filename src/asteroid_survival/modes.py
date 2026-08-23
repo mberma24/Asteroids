@@ -47,7 +47,12 @@ MODES: dict[str, Mode] = {
 }
 
 # Controller name -> the ship id it plays under. Ids are what the scoreboard shows.
+# `_controllers` in the CLI can already build every one of these; leaving a name out here
+# only blocks it from a lineup. `heuristic` is the sole scripted controller that manoeuvres,
+# which makes it the one to watch when the question is what movement looks like -- it is not
+# a yardstick, and its own docstring says so.
 ROSTER_IDS = {"human": "you", "closest": "greedy", "pilot": "pilot",
+              "heuristic": "heuristic", "random": "random",
               "ppo": "model", "muzero": "model"}
 
 
@@ -122,8 +127,31 @@ def resolve(mode_name: str) -> Mode:
             f"unknown mode: {mode_name}; choose from {', '.join(MODES)}") from None
 
 
+def round_env_settings(mode_name: str, round_number: int | None) -> dict:
+    """Environment settings a curriculum round is scored under, for `compare` and friends.
+
+    `build` returns only a `GameConfig`, which cannot express how the round *ends*. Scoring a
+    survival round under the environment's `completion="waves"` default makes
+    `completed_stage` structurally false, because it is read from `survived_to_limit`, which
+    in turn needs `decisions >= max_decisions`. Both values live on the stage, so both have
+    to travel with the config or comparisons silently report a zero clear rate.
+    """
+    mode = MODES.get(mode_name) if mode_name else None
+    if mode is None or not mode.is_round or round_number is None:
+        return {}
+    from .rl.curriculum import load_curriculum
+
+    spec = load_curriculum(_project_path(mode.curriculum))
+    if not 1 <= round_number <= len(spec.stages):
+        return {}
+    stage = spec.stages[round_number - 1]
+    return {"completion": stage.completion, "max_decisions": stage.max_decisions,
+            "no_hit_seconds": stage.no_hit_seconds}
+
+
 def build(mode_name: str, round_number: int | None = None, *,
-          controllers: list[str] | None = None) -> tuple[GameConfig, str]:
+          controllers: list[str] | None = None,
+          scoring: bool = False) -> tuple[GameConfig, str]:
     """A configuration for one mode, and a label describing what it is.
 
     The same builder serves solo play and showdowns; only the lineup differs. That is why
@@ -143,9 +171,14 @@ def build(mode_name: str, round_number: int | None = None, *,
                 f"round for '{mode.name}' must be between 1 and {len(spec.stages)}")
         stage = spec.stages[round_number - 1]
         config = stage.game_config(spec.base)
-        if stage.survival:
+        if stage.survival and not scoring:
             # A survival round is cleared by lasting max_seconds, so stop a human there too
             # rather than letting it run past the point training scores.
+            #
+            # Not when scoring, though: the RL environment marks `survived_to_limit` only on
+            # its own decision-limit truncation, and an objective step limit terminates the
+            # game one moment sooner, so the flag -- and with it `completed_stage` -- would
+            # never be set. Training leaves `max_steps` at None for exactly this reason.
             config.objective.max_steps = stage.max_decisions * 4
         label = f"{mode.name} {round_number}: {stage.name}"
     else:
