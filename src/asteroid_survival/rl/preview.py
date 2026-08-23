@@ -46,7 +46,10 @@ def resolve_checkpoint(target: str | Path) -> tuple[Path, dict | None]:
         episode = (int(json.loads(state.read_text(encoding="utf-8")).get("episode", 0))
                    if state.is_file() else 0)
     else:
-        episode = int(checkpoint.name.removeprefix("checkpoint_") or 0)
+        # A checkpoint can be pointed at by any path, not only one this code named, so a
+        # directory copied elsewhere must not crash the preview on its own name.
+        digits = checkpoint.name.removeprefix("checkpoint_")
+        episode = int(digits) if digits.isdigit() else 0
     log = checkpoint.parent / "evaluation.jsonl"
     record = None
     if log.is_file():
@@ -89,7 +92,11 @@ def preview_checkpoint(target: str | Path, *, seed: int = 10_000,
         history_long_frames=int(layout.get("history_long_frames", 0)),
         history_long_stride=int(layout.get("history_long_stride", 8)),
         max_projectiles=int(layout.get("max_projectiles", 0)),
-        reward_config=stage_reward, completion=stage.completion)
+        reward_config=stage_reward, completion=stage.completion,
+        # Observation v5 appends the global difficulty block. Without it the environment is
+        # 16 inputs narrower than the policy expects and the shape check below rejects every
+        # current checkpoint, so no v5 model could be previewed at all.
+        global_features=int(layout.get("version", 4)) >= 5)
     algorithm = metadata.get("algorithm", "muzero")
     if algorithm in {"ppo", "recurrent_ppo"}:
         from .ppo import PPOController

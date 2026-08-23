@@ -2489,3 +2489,21 @@ def test_scoring_a_survival_round_can_report_a_clear():
         "round 1 is trivial for greedy; a zero clear rate here means the scoring "
         "environment is not the one training used")
     output.unlink(missing_ok=True)
+
+
+def test_a_checkpoint_can_be_previewed_from_any_directory_name(tmp_path):
+    """`resolve_checkpoint` must not assume it named the directory it is given.
+
+    It parsed the episode straight out of the folder name, so a checkpoint copied anywhere
+    not called `checkpoint_NNNNNN` -- a champion pulled off a training box, say -- crashed
+    with a ValueError before the preview could start.
+    """
+    from asteroid_survival.rl.preview import resolve_checkpoint
+
+    target = tmp_path / "pulled-from-the-cloud"
+    target.mkdir()
+    (target / "metadata.json").write_text(json.dumps({"algorithm": "ppo"}), encoding="utf-8")
+
+    checkpoint, record = resolve_checkpoint(target)
+    assert checkpoint == target
+    assert record is None
