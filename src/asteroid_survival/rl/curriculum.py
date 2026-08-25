@@ -192,6 +192,35 @@ def retention_holds(prior: list[dict], *, retention_completion: float,
     return pooled >= retention_completion and min(rate for rate, _ in scored) >= retention_floor
 
 
+def promotion_samples_from_log(path: str | Path, stage: int, window: int,
+                               *, through_episode: int | None = None) -> list[dict]:
+    """Recover a pooled-promotion window from logs written before pooling existed."""
+    source = Path(path)
+    if not source.is_file():
+        return []
+    samples = []
+    for line in source.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+            if int(record.get("training_stage", -1)) != stage:
+                continue
+            if through_episode is not None and int(record.get("episode", 0)) > through_episode:
+                continue
+            current = record["stages"][stage]
+            episodes = max(0, int(current.get("episodes", 0) or 0))
+            if not episodes:
+                continue
+            samples.append({
+                "completion_rate": float(current["completion_rate"]),
+                "clear_rate": float(current.get("clear_rate", 0.0)),
+                "mean_accuracy": float(current["mean_accuracy"]),
+                "episodes": episodes,
+            })
+        except (IndexError, KeyError, TypeError, ValueError):
+            continue
+    return samples[-max(0, window):] if window > 0 else []
+
+
 @dataclass(frozen=True, slots=True)
 class CurriculumStage:
     name: str
@@ -211,6 +240,16 @@ class CurriculumStage:
     no_hit_seconds: float
     promotion_accuracy: float | None
     miss_penalty: float | None
+    promotion_clear_rate: float | None = None
+    """Per-round clear-rate bar, or None to use the curriculum-wide one.
+
+    Difficulty is not uniform, so one global threshold is either trivial early or impossible
+    late: the same champion clears round 24 at 0.922 and round 29 at 0.438. A per-round bar
+    lets each rung demand real improvement over what is already known to be reachable there.
+
+    Defaulted, and placed after every field that has no default, so the many existing
+    positional constructions of this dataclass keep working.
+    """
     survival: bool = False
     """Endless round: clearing it means lasting ``max_seconds`` instead of clearing waves."""
     spawn_interval: float = 1.25
@@ -351,8 +390,19 @@ class CurriculumSpec:
     promotion_accuracy: float = 0.45
     promotion_streak: int = 2
     promotion_window: int = 4
+    promotion_pool: bool = False
+    """Pool current-stage metrics over ``promotion_window`` evaluations before promotion."""
     current_stage_probability: float = 0.75
     promotion_clear_rate: float = 0.0
+    retention_stage_limit: int = 0
+    """Highest prior stage retention may sample, or 0 for no limit.
+
+    A tier that extends a long parent inherits every one of its rounds as "prior", including
+    rounds the policy never mastered. `retention_holds` enforces a per-stage completion
+    floor, so sampling one of those fails retention outright and blocks promotion forever.
+    The co-operative tier extends all 96 solo rounds but forks from a policy that reached
+    round 26, so it caps retention there.
+    """
     observation_version: int = 4
     evaluation_panels: int = 1
     test_evaluation_episodes: int = 128
@@ -432,7 +482,12 @@ def load_curriculum(path: str | Path) -> CurriculumSpec:
             phase = next((item for item in phases
                           if index + 1 <= int(item["until"])), {})
             stage_items.append({
-                "name": f"{progression.get('name_prefix', 'round')}-{parent_count + index + 1}",
+                # Numbering continues the parent by default, because `name` is part of the
+                # frozen task hash and every existing checkpoint depends on it. A tier that
+                # is a fresh axis rather than a continuation sets `name_start = 1`, so its
+                # first round reads "coop2-round-1" instead of "coop2-round-97".
+                "name": (f"{progression.get('name_prefix', 'round')}-"
+                         f"{int(progression.get('name_start', parent_count + 1)) + index}"),
                 "composition": compositions[tier],
                 "target_waves": int(progression.get("target_waves", 1)),
                 "min_speed": stepped("min_speed", index),
@@ -462,6 +517,9 @@ def load_curriculum(path: str | Path) -> CurriculumSpec:
                 "spawn_safe_radius": float(progression.get("spawn_safe_radius", 0.0)),
                 "spawn_safe_seconds": float(progression.get("spawn_safe_seconds", 0.0)),
                 "promotion_accuracy": float(progression.get("promotion_accuracy", 0.05)),
+                **({"promotion_clear_rate":
+                    float(progression["promotion_clear_rate"])}
+                   if "promotion_clear_rate" in progression else {}),
                 "miss_penalty": float(progression.get("miss_penalty", reward.miss_penalty)),
             })
 
@@ -481,6 +539,8 @@ def load_curriculum(path: str | Path) -> CurriculumSpec:
         no_hit_seconds=float(item.get("no_hit_seconds", 6.0)),
         promotion_accuracy=(float(item["promotion_accuracy"])
                             if "promotion_accuracy" in item else None),
+        promotion_clear_rate=(float(item["promotion_clear_rate"])
+                              if "promotion_clear_rate" in item else None),
         miss_penalty=(float(item["miss_penalty"])
                       if "miss_penalty" in item else None),
         survival=bool(item.get("survival", False)),
@@ -511,8 +571,10 @@ def load_curriculum(path: str | Path) -> CurriculumSpec:
         promotion_accuracy=float(inherited("promotion_accuracy", 0.45)),
         promotion_streak=int(inherited("promotion_streak", 2)),
         promotion_window=int(inherited("promotion_window", 4)),
+        promotion_pool=bool(inherited("promotion_pool", False)),
         current_stage_probability=float(inherited("current_stage_probability", 0.75)),
         promotion_clear_rate=float(inherited("promotion_clear_rate", 0.0)),
+        retention_stage_limit=int(inherited("retention_stage_limit", 0)),
         observation_version=int(inherited("observation_version", 4)),
         evaluation_panels=int(inherited("evaluation_panels", 1)),
         test_evaluation_episodes=int(inherited("test_evaluation_episodes", 128)),
@@ -521,7 +583,8 @@ def load_curriculum(path: str | Path) -> CurriculumSpec:
 
 class CurriculumManager:
     def __init__(self, spec: CurriculumSpec, seed: int = 0, *, stage: int = 0, streak: int = 0,
-                 mastered: bool = False, promotion_history: list[bool] | None = None):
+                 mastered: bool = False, promotion_history: list[bool] | None = None,
+                 promotion_samples: list[dict] | None = None):
         self.spec = spec
         self.stage = max(0, min(stage, len(spec.stages) - 1))
         self.streak = max(0, streak)
@@ -529,6 +592,9 @@ class CurriculumManager:
         inherited_history = ([True] * self.streak
                              if promotion_history is None else promotion_history)
         self.promotion_history = list(inherited_history)[-spec.promotion_window:]
+        self.promotion_samples = [dict(sample) for sample in (promotion_samples or [])
+                                  ][-spec.promotion_window:]
+        self.promotion_pool: dict | None = None
         self._rng = random.Random(seed)
 
     def sample_stage(self, *, focus_stage: int | None = None,
@@ -553,23 +619,59 @@ class CurriculumManager:
         accuracy_threshold = (self.spec.promotion_accuracy
                               if stage.promotion_accuracy is None
                               else stage.promotion_accuracy)
-        current_ok = (current["completion_rate"] >= self.spec.promotion_completion
-                      and current.get("clear_rate", 0.0) >= self.spec.promotion_clear_rate
-                      and current["mean_accuracy"] >= accuracy_threshold)
+        clear_threshold = (self.spec.promotion_clear_rate
+                           if stage.promotion_clear_rate is None
+                           else stage.promotion_clear_rate)
         retained = retention_holds(
             results[:self.stage],
             retention_completion=self.spec.retention_completion,
             retention_floor=self.spec.retention_floor)
+        if self.spec.promotion_pool:
+            self.promotion_samples.append({
+                "completion_rate": float(current["completion_rate"]),
+                "clear_rate": float(current.get("clear_rate", 0.0)),
+                "mean_accuracy": float(current["mean_accuracy"]),
+                "episodes": max(0, int(current.get("episodes", 1) or 0)),
+            })
+            self.promotion_samples = self.promotion_samples[-self.spec.promotion_window:]
+            episodes = sum(sample["episodes"] for sample in self.promotion_samples)
+
+            def pooled(name: str) -> float:
+                return (sum(sample[name] * sample["episodes"]
+                            for sample in self.promotion_samples) / episodes
+                        if episodes else 0.0)
+
+            self.promotion_pool = {
+                "evaluations": len(self.promotion_samples),
+                "required_evaluations": self.spec.promotion_window,
+                "episodes": episodes,
+                "completion_rate": pooled("completion_rate"),
+                "clear_rate": pooled("clear_rate"),
+                "mean_accuracy": pooled("mean_accuracy"),
+            }
+            current_ok = (len(self.promotion_samples) >= self.spec.promotion_window
+                          and self.promotion_pool["completion_rate"]
+                          >= self.spec.promotion_completion
+                          and self.promotion_pool["clear_rate"] >= clear_threshold
+                          and self.promotion_pool["mean_accuracy"] >= accuracy_threshold)
+        else:
+            self.promotion_pool = None
+            current_ok = (current["completion_rate"] >= self.spec.promotion_completion
+                          and current.get("clear_rate", 0.0) >= clear_threshold
+                          and current["mean_accuracy"] >= accuracy_threshold)
         passed = bool(current_ok and retained)
         self.promotion_history.append(passed)
         self.promotion_history = self.promotion_history[-self.spec.promotion_window:]
-        self.streak = sum(self.promotion_history)
-        if self.streak < self.spec.promotion_streak:
+        self.streak = (len(self.promotion_samples) if self.spec.promotion_pool
+                       else sum(self.promotion_history))
+        if not passed or (not self.spec.promotion_pool
+                          and self.streak < self.spec.promotion_streak):
             return False
         if self.stage < len(self.spec.stages) - 1:
             self.stage += 1
             self.streak = 0
             self.promotion_history = []
+            self.promotion_samples = []
             return True
         self.mastered = True
         return False

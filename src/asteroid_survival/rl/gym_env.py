@@ -98,7 +98,7 @@ class CurriculumGymEnv(gym.Env[np.ndarray, int]):
             history_long_stride=self.history_long_stride, reward_config=reward,
             completion=stage.completion, max_teammates=self.spec.max_teammates,
             companion_policy=self.companion_policy,
-            global_features=self.spec.observation_version >= 5)
+            observation_version=self.spec.observation_version)
 
     def set_curriculum_state(self, stage: int,
                              recovery_stage: int | None = None) -> None:

@@ -607,13 +607,15 @@ def train_curriculum(curriculum_path: str | Path, output_dir: str | Path, *, epi
         if not 1 <= start_stage <= len(spec.stages):
             raise ValueError(f"start_stage must be between 1 and {len(spec.stages)}")
         saved_state.update({"stage": start_stage - 1, "streak": 0,
-                            "promotion_history": [], "mastered": False,
+                            "promotion_history": [], "promotion_samples": [],
+                            "mastered": False,
                             "recovery_stage": None, "recovery_until": 0})
     manager = CurriculumManager(
         spec, seed, stage=int(saved_state.get("stage", 0)),
         streak=int(saved_state.get("streak", 0)),
         mastered=bool(saved_state.get("mastered", False)),
-        promotion_history=saved_state.get("promotion_history"))
+        promotion_history=saved_state.get("promotion_history"),
+        promotion_samples=saved_state.get("promotion_samples"))
     recovery_stage = saved_state.get("recovery_stage")
     recovery_stage = int(recovery_stage) if recovery_stage is not None else None
     recovery_until = int(saved_state.get("recovery_until", 0))
@@ -656,6 +658,13 @@ def train_curriculum(curriculum_path: str | Path, output_dir: str | Path, *, epi
     if (agent.observation_size, agent.num_actions) != (
             prototype.observation_size, prototype.num_actions):
         raise ValueError("checkpoint observation/action shapes do not match the curriculum")
+    if spec.promotion_pool and "promotion_samples" not in saved_state and resume:
+        from .curriculum import promotion_samples_from_log
+        source_log = _resume_artifact(destination, resume, "evaluation.jsonl")
+        manager.promotion_samples = promotion_samples_from_log(
+            source_log, manager.stage, spec.promotion_window,
+            through_episode=agent.episodes)
+        manager.streak = len(manager.promotion_samples)
     if resume:
         metadata = json.loads((Path(resume) / "metadata.json").read_text(encoding="utf-8"))
         stored_layout = metadata.get("observation_layout") or {}
@@ -819,6 +828,7 @@ def train_curriculum(curriculum_path: str | Path, output_dir: str | Path, *, epi
                 evaluation = {"episode": episode, "training_stage": evaluated_stage,
                               "next_training_stage": manager.stage,
                               "promotion_streak": manager.streak, "promoted": promoted,
+                              "promotion_pool": manager.promotion_pool,
                               "promotion_completion_target": spec.promotion_completion,
                               "stages": results}
                 current = results[evaluated_stage]
@@ -832,6 +842,10 @@ def train_curriculum(curriculum_path: str | Path, output_dir: str | Path, *, epi
                       f"completion {current['completion_rate']:.1%}, "
                       f"accuracy {current['mean_accuracy']:.3f} "
                       f"(target {accuracy_target:.3f})" +
+                      ((f", pool {manager.promotion_pool['evaluations']}/"
+                        f"{manager.promotion_pool['required_evaluations']} "
+                        f"completion {manager.promotion_pool['completion_rate']:.1%}")
+                       if manager.promotion_pool else "") +
                       (f" - PROMOTED to stage {manager.stage + 1}" if promoted else ""),
                       flush=True)
 
@@ -883,6 +897,7 @@ def train_curriculum(curriculum_path: str | Path, output_dir: str | Path, *, epi
                 state_text = json.dumps({"stage": manager.stage,
                                          "streak": manager.streak,
                                          "promotion_history": manager.promotion_history,
+                                         "promotion_samples": manager.promotion_samples,
                                          "mastered": manager.mastered,
                                          "recovery_stage": recovery_stage,
                                          "recovery_until": recovery_until}, indent=2) + "\n"

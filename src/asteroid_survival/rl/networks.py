@@ -98,3 +98,36 @@ class SetFeaturesExtractor(BaseFeaturesExtractor):
 
         globals_ = observations[:, at:at + self.global_features]
         return torch.cat([ship, globals_, *pooled], dim=-1)
+
+
+class TeamSetFeaturesExtractor(BaseFeaturesExtractor):
+    """Apply one shared entity encoder to two local views, then expose team context.
+
+    The observation order may be swapped by the environment each episode. Sharing the local
+    encoder ensures both action branches learn the same visual vocabulary; concatenating the
+    ordered embeddings still lets the policy choose a different action for each ship.
+    """
+
+    def __init__(self, observation_space: spaces.Box, *, local_width: int,
+                 ship_features: int, asteroid_slots: int, asteroid_features: int,
+                 projectile_slots: int, projectile_features: int,
+                 teammate_slots: int, teammate_features: int, global_features: int):
+        if observation_space.shape != (2 * local_width,):
+            raise ValueError("team observation must contain exactly two local views")
+        local_features = ship_features + global_features + 6 * 64
+        super().__init__(observation_space, features_dim=4 * local_features)
+        local_space = spaces.Box(-float("inf"), float("inf"), shape=(local_width,))
+        self.local = SetFeaturesExtractor(
+            local_space, ship_features=ship_features,
+            asteroid_slots=asteroid_slots, asteroid_features=asteroid_features,
+            projectile_slots=projectile_slots, projectile_features=projectile_features,
+            teammate_slots=teammate_slots, teammate_features=teammate_features,
+            global_features=global_features, entity_width=64, embedding=64)
+        self.local_width = local_width
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        first = self.local(observations[:, :self.local_width])
+        second = self.local(observations[:, self.local_width:])
+        mean = 0.5 * (first + second)
+        difference = torch.abs(first - second)
+        return torch.cat((first, second, mean, difference), dim=-1)

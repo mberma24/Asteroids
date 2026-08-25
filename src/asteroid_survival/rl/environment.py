@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import math
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -24,10 +25,43 @@ MOBILE_ACTIONS = tuple(Action)
 ASTEROID_FEATURES = 12
 PROJECTILE_FEATURES = 10
 MAX_PROJECTILES = 8
-TEAMMATE_FEATURES = 8
+TEAMMATE_FEATURES = 11
 GLOBAL_FEATURES = 16
+POSITION_FEATURES = 4
+COLLISION_THREAT_FEATURES = 10
 SHIP_FEATURES = 7
 MOBILE_SHIP_FEATURES = 11
+
+
+def global_feature_count(observation_version: int) -> int:
+    """Number of appended global inputs carried by an observation version."""
+    if observation_version < 5:
+        return 0
+    return (GLOBAL_FEATURES
+            + (POSITION_FEATURES if observation_version >= 6 else 0)
+            + (COLLISION_THREAT_FEATURES if observation_version >= 7 else 0))
+
+
+def collision_prediction(delta: Vec2, rvx: float, rvy: float,
+                         collision_radius: float, *, horizon: float = 5.0
+                         ) -> tuple[float, float, float, float]:
+    """Predict future closest approach without treating receding rocks as immediate threats.
+
+    The old calculation clamped a closest approach in the past to time zero. Selecting the
+    minimum then ranked every receding asteroid ahead of genuine future collisions. Evaluate
+    those rocks at the end of the prediction horizon instead, where their growing clearance
+    correctly makes them low priority.
+    """
+    speed2 = rvx * rvx + rvy * rvy
+    projected = -(delta.x * rvx + delta.y * rvy) / speed2 if speed2 > 1e-9 else horizon
+    ttc = min(horizon, projected) if projected > 0.0 else horizon
+    future_x, future_y = delta.x + rvx * ttc, delta.y + rvy * ttc
+    clearance = max(0.0, math.hypot(future_x, future_y) - collision_radius)
+    distance = max(delta.length(), 1e-9)
+    ux, uy = delta.x / distance, delta.y / distance
+    closing = -(rvx * ux + rvy * uy)
+    tangential = rvx * -uy + rvy * ux
+    return ttc, clearance, closing, tangential
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +97,31 @@ class RewardConfig:
     """Prorate survival shaping when an episode ends inside a frame-skipped decision."""
     safety_progress: float = 0.0
     """Optional signed change in predicted safety; zero in the baseline curriculum."""
+    # Co-operative rounds. The simulator reports a teammate collision as `ship_collision` and
+    # a teammate's shot as `friendly_fire`, neither of which is a `ship_destroyed` event, so
+    # before these existed the only penalised death was an asteroid hit -- the two failure
+    # modes a co-operative round exists to teach cost nothing at all. Measured on
+    # coop2-scratch: `death_penalty` averaged 0.10 while 56% of episodes ended in a death.
+    # Default 0.0 keeps every solo curriculum and its checkpoints unchanged.
+    collision_penalty: float = 0.0
+    """Paid when the agent dies by bumping into a teammate."""
+    friendly_fire_penalty: float = 0.0
+    """Paid when the agent dies to a teammate's shot."""
+    teammate_death_penalty: float = 0.0
+    """Paid whenever a teammate dies, whatever killed it.
+
+    Losing the partner has to cost even when it is nobody's fault, or the agent has no reason
+    to protect it: before this, a teammate killed by an asteroid was free, and the only
+    consequence was the forfeited `round_clear`. Stacks with `friendly_fire_dealt_penalty`,
+    so losing a partner is bad and shooting one yourself is worse.
+    """
+    friendly_fire_dealt_penalty: float = 0.0
+    """Paid when the agent's own shot kills a teammate.
+
+    Without this, killing the partner is *profitable*: the shooter loses nothing and inherits
+    an emptier arena, so the reward can favour eliminating the ship it is supposed to
+    co-operate with.
+    """
 
 
 def ship_feature_count(config: GameConfig) -> int:
@@ -76,7 +135,11 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                        max_projectiles: int = MAX_PROJECTILES,
                        max_teammates: int = 0,
                        reveal_progress: bool = True, *, global_features: bool = False,
+                       observation_version: int | None = None,
+                       asteroid_context: dict[int, tuple[float, int]] | None = None,
                        spawn_phase: float = 0.0) -> np.ndarray:
+    version = (5 if global_features else 4) if observation_version is None else int(
+        observation_version)
     slots = history_offsets(history_frames) if offsets is None else offsets
     ship = next(ship for ship in state.ships if ship.id == agent_id)
     # Without the cooldown the agent cannot tell whether FIRE will do anything: the weapon is
@@ -163,10 +226,18 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
     # of its learned input weights.
     projectile_speed = max(config.projectile.speed, 1.0)
     lifetime = max(config.projectile.lifetime, 1e-6)
+    # Teammates' projectiles first, then the agent's own, each nearest-first. Slots were
+    # filled purely by distance, and a projectile lifetime of 1.45s against a 0.24s cooldown
+    # leaves roughly six of the agent's own shots alive at once -- all starting at distance
+    # zero. That crowded incoming friendly fire out of an 8-slot list, hiding exactly the
+    # projectiles the agent has to dodge. Ordering, not sizing: the layout is unchanged, so
+    # existing checkpoints still load.
     projectiles = sorted(
         state.projectiles,
-        key=lambda projectile: wrapped_delta(
-            origin, Vec2(projectile.x, projectile.y), state.width, state.height).length(),
+        key=lambda projectile: (
+            projectile.owner_id == agent_id,
+            wrapped_delta(origin, Vec2(projectile.x, projectile.y),
+                          state.width, state.height).length()),
     )[:max_projectiles]
     for projectile in projectiles:
         delta = wrapped_delta(
@@ -199,6 +270,13 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
             delta = wrapped_delta(origin, Vec2(other.x, other.y), state.width, state.height)
             distance = delta.length()
             bearing = math.atan2(delta.y, delta.x) - ship.angle
+            # Position, velocity and bearing say where a teammate *is*. Heading and
+            # cooldown say what it is about to do: which way it will thrust, where its next
+            # shot goes, and whether it can fire at all. Without those a policy cannot tell
+            # a teammate that is about to shoot through it from one that is merely nearby,
+            # and friendly fire is the rule these rounds exist to teach.
+            facing = other.angle - ship.angle
+            cooldown = max(0.0, float(getattr(other, "cooldown", 0.0)))
             values.extend((
                 1.0,
                 delta.x / diagonal,
@@ -208,9 +286,12 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                 distance / diagonal,
                 math.sin(bearing),
                 math.cos(bearing),
+                math.sin(facing),
+                math.cos(facing),
+                min(1.0, cooldown / max(1e-6, config.ship.fire_cooldown)),
             ))
         values.extend([0.0] * ((max_teammates - len(others)) * TEAMMATE_FEATURES))
-    if global_features:
+    if version >= 5:
         difficulty = config.asteroid.difficulty_at(state.elapsed)
         # A compact absolute-difficulty block fixes an ambiguity in the legacy encoding:
         # asteroid velocities were normalized by the stage maximum, making slow and fast
@@ -249,6 +330,41 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                            threat.radius / ASTEROID_RADII[3]))
         else:
             values.extend((0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0))
+    if version >= 6:
+        # Interval spawns originate on fixed world-coordinate seams. Relative observations
+        # alone therefore alias states with different spawn risk. Periodic coordinates keep
+        # the toroidal geometry continuous: x=0 and x=width encode identically instead of
+        # introducing an artificial discontinuity at the wrap boundary.
+        x_phase = math.tau * ship.x / state.width
+        y_phase = math.tau * ship.y / state.height
+        values.extend((math.sin(x_phase), math.cos(x_phase),
+                       math.sin(y_phase), math.cos(y_phase)))
+    if version >= 7:
+        # Keep the legacy v5 threat block untouched so older checkpoints widen without any
+        # semantic shift. This corrected block is appended and begins at zero weight. Rank by
+        # predicted collision clearance, then time: a collision course beats a harmless close
+        # pass, and a receding rock no longer wins by receiving a bogus TTC of zero.
+        threats = []
+        for asteroid in state.asteroids:
+            delta = wrapped_delta(origin, Vec2(asteroid.x, asteroid.y), state.width, state.height)
+            rvx, rvy = asteroid.vx - ship.vx, asteroid.vy - ship.vy
+            ttc, miss, closing, tangential = collision_prediction(
+                delta, rvx, rvy, asteroid.radius + config.ship.radius)
+            threats.append((miss, ttc, asteroid, delta, closing, tangential))
+        if threats:
+            miss, ttc, threat, delta, closing, tangential = min(
+                threats, key=lambda item: (item[0], item[1]))
+            bearing = math.atan2(delta.y, delta.x) - ship.angle
+            signed = lambda value: math.copysign(
+                math.log1p(abs(value)) / math.log1p(2500.0), value)
+            born, parent_size = ((asteroid_context or {}).get(threat.id, (state.elapsed, 0)))
+            age = max(0.0, state.elapsed - born)
+            values.extend((1.0, ttc / 5.0, min(1.0, miss / diagonal),
+                           math.sin(bearing), math.cos(bearing), signed(closing),
+                           signed(tangential), threat.radius / ASTEROID_RADII[3],
+                           min(1.0, age / 5.0), parent_size / 3.0))
+        else:
+            values.extend((0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
     return np.asarray(values, dtype=np.float32)
 
 
@@ -303,7 +419,19 @@ class EpisodeMetrics:
     timeout_penalty: float = 0.0
     death_penalty: float = 0.0
     time_penalty: float = 0.0
+    ship_collisions: int = 0
+    teammate_deaths: int = 0
+    teammate_death_penalty: float = 0.0
+    mean_teammate_distance: float = 0.0
+    minimum_teammate_distance: float | None = None
+    friendly_fire_taken: int = 0
+    friendly_fire_dealt: int = 0
+    collision_penalty: float = 0.0
+    friendly_fire_penalty: float = 0.0
+    friendly_fire_dealt_penalty: float = 0.0
     survived_to_limit: bool = False
+    team_survived_to_limit: bool = False
+    """Every ship still alive at the limit. On a solo round this equals `survived_to_limit`."""
     stalled_out: bool = False
     """Ended early after going no_hit_seconds without destroying anything."""
     last_hit_time: float = 0.0
@@ -347,7 +475,8 @@ class AsteroidsRLEnv:
                  no_hit_seconds: float = 0.0, completion: str = "waves",
                  max_teammates: int = 0,
                  companion_policy: Callable[[np.ndarray], int] | None = None,
-                 reveal_progress: bool | None = None, global_features: bool = False):
+                 reveal_progress: bool | None = None, global_features: bool = False,
+                 observation_version: int | None = None, rotate_agent_slot: bool = False):
         if completion not in {"waves", "survival"}:
             raise ValueError("completion must be waves or survival")
         self.completion = completion
@@ -364,6 +493,16 @@ class AsteroidsRLEnv:
         self.agent_id = agent_id or config.ships[0].id
         if self.agent_id not in {ship.id for ship in config.ships}:
             raise ValueError(f"unknown agent ship: {self.agent_id}")
+        # Which ship the learner flies is re-drawn every episode when there is more than one,
+        # because ships spawn at fixed mirrored poses and the network is not equivariant to
+        # that mirroring. Training the learner in ship1's slot for every episode optimised
+        # ship1's pose and never ship2's, and the same weights then behaved completely
+        # differently in the other seat: measured on coop2-v4 at 28,000 episodes, ship2 shot
+        # ship1 in 35-37% of episodes while ship1 shot ship2 in 5-8%, and the gap followed
+        # the SLOT rather than which seat was learning. That one-sided fratricide is what
+        # ended 60% of the run's training episodes.
+        self.rotate_agent_slot = rotate_agent_slot and len(config.ships) > 1
+        self._slot_ids = [spec.id for spec in config.ships]
         self.frame_skip = frame_skip
         self.max_decisions = max_decisions
         self.max_asteroids = max_asteroids or config.asteroid.active_cap
@@ -375,7 +514,13 @@ class AsteroidsRLEnv:
         # same policy. Left unset the companions simply hold station, which is what keeps
         # single-ship behaviour identical.
         self.companion_policy = companion_policy
-        self.global_features = bool(global_features)
+        self._companion_observations: dict[str, np.ndarray] = {}
+        self.observation_version = ((5 if global_features else 4)
+                                    if observation_version is None
+                                    else int(observation_version))
+        if self.observation_version < 1:
+            raise ValueError("observation_version must be positive")
+        self.global_features = self.observation_version >= 5
         self.companion_ids = [spec.id for spec in config.ships if spec.id != self.agent_id]
         # A survival round is scored on staying alive, and its decision limit is only there
         # to bound episode cost. Telling the policy how close that limit is invites it to
@@ -401,6 +546,7 @@ class AsteroidsRLEnv:
         # The buffer has to reach as far back as the oldest slot samples.
         self._history_depth = (max(self.history_slots) + 1) if self.history_slots else 0
         self._history: dict[int, deque] = {}
+        self._asteroid_context: dict[int, tuple[float, int]] = {}
         self.actions = MOBILE_ACTIONS if config.ship.mobile else STATIONARY_ACTIONS
         self.simulation = Simulation(config)
         self.state: WorldSnapshot | None = None
@@ -430,12 +576,18 @@ class AsteroidsRLEnv:
             ASTEROID_FEATURES + 2 * len(self.history_slots)) + (
                 self.max_projectiles * PROJECTILE_FEATURES) + (
                     self.max_teammates * TEAMMATE_FEATURES)
-                + (GLOBAL_FEATURES if self.global_features else 0))
+                + global_feature_count(self.observation_version))
 
     def reset(self, seed: int = 0) -> tuple[np.ndarray, dict[str, Any]]:
+        if self.rotate_agent_slot:
+            # Drawn from the episode seed, so an evaluation panel stays reproducible and a
+            # seed always means the same episode.
+            self.agent_id = self._slot_ids[random.Random(seed).randrange(len(self._slot_ids))]
+            self.companion_ids = [spec for spec in self._slot_ids if spec != self.agent_id]
         self.state = self.simulation.reset(seed)
         self.metrics = EpisodeMetrics(seed=seed)
         self._history.clear()
+        self._asteroid_context = {asteroid.id: (0.0, 0) for asteroid in self.state.asteroids}
         self._wave_started_at = 0.0
         self._wave_shots = self._wave_hits = 0
         return self._observation(self.state), {"seed": seed}
@@ -454,6 +606,8 @@ class AsteroidsRLEnv:
             track.appendleft((asteroid.x, asteroid.y))
         for asteroid_id in [key for key in self._history if key not in live]:
             del self._history[asteroid_id]
+        for asteroid_id in [key for key in self._asteroid_context if key not in live]:
+            del self._asteroid_context[asteroid_id]
 
     def _nearest_aim_error(self, asteroid_id: int | None = None) -> tuple[int, float] | None:
         """Return target id and absolute wrapped bearing error for reward shaping."""
@@ -474,9 +628,30 @@ class AsteroidsRLEnv:
         wrapped = (bearing + math.pi) % (2 * math.pi) - math.pi
         return rock.id, abs(wrapped)
 
+    def _record_asteroid_events(self, events: tuple[GameEvent, ...],
+                                asteroid_sizes: dict[int, int]) -> None:
+        """Remember when a rock appeared and whether it is a freshly split fragment."""
+        elapsed = self.state.elapsed if self.state is not None else 0.0
+        for event in events:
+            asteroid_id = int(event.entity_id) if event.entity_id.isdigit() else None
+            if event.kind == "asteroid_spawned" and asteroid_id is not None:
+                self._asteroid_context[asteroid_id] = (elapsed, 0)
+            elif event.kind == "asteroid_split" and asteroid_id is not None:
+                parent_size = asteroid_sizes.get(int(event.detail), 0)
+                self._asteroid_context[asteroid_id] = (elapsed, parent_size)
+
+    def _charge_teammate_death(self) -> float:
+        """Count a lost teammate and return what it costs, whatever killed it."""
+        self.metrics.teammate_deaths += 1
+        if self.reward_config is None:
+            return 0.0
+        cost = self.reward_config.teammate_death_penalty
+        self.metrics.teammate_death_penalty += cost
+        return cost
+
     def _safety_potential(self) -> float:
         """Bounded predicted clearance potential used only when explicitly configured."""
-        if self.state is None or not self.state.asteroids:
+        if self.state is None:
             return 1.0
         ship = next(item for item in self.state.ships if item.id == self.agent_id)
         origin = Vec2(ship.x, ship.y)
@@ -485,14 +660,26 @@ class AsteroidsRLEnv:
             delta = wrapped_delta(origin, Vec2(rock.x, rock.y),
                                   self.state.width, self.state.height)
             vx, vy = rock.vx - ship.vx, rock.vy - ship.vy
-            speed2 = vx * vx + vy * vy
-            ttc = max(0.0, -(delta.x * vx + delta.y * vy) / speed2) if speed2 > 1e-9 else 5.0
-            ttc = min(5.0, ttc)
-            clearance = max(0.0, math.hypot(delta.x + vx * ttc, delta.y + vy * ttc)
-                            - rock.radius - self.config.ship.radius)
+            ttc, clearance, _, _ = collision_prediction(
+                delta, vx, vy, rock.radius + self.config.ship.radius)
             candidates.append(0.5 * min(1.0, ttc / 5.0)
                               + 0.5 * min(1.0, clearance / 150.0))
-        return min(candidates)
+        # A teammate is a threat too, and this potential could not see one. Collisions need
+        # 28px of closing, but measured teammate *kills* land at a median of 108px -- so a
+        # policy that learns "do not touch" still drifts well inside shooting range, which is
+        # exactly what happened: collisions fell to 1.8% of episodes while friendly fire
+        # stayed at 63%. Nothing rewarded the separation that avoids a point-blank shot.
+        for other in self.state.ships:
+            if other.id == self.agent_id or not other.alive:
+                continue
+            delta = wrapped_delta(origin, Vec2(other.x, other.y),
+                                  self.state.width, self.state.height)
+            vx, vy = other.vx - ship.vx, other.vy - ship.vy
+            ttc, clearance, _, _ = collision_prediction(
+                delta, vx, vy, 2.0 * self.config.ship.radius)
+            candidates.append(0.5 * min(1.0, ttc / 5.0)
+                              + 0.5 * min(1.0, clearance / 150.0))
+        return min(candidates) if candidates else 1.0
 
     def step(self, action_index: int, *, on_frame: Callable[[WorldSnapshot], None] | None = None
              ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
@@ -517,6 +704,7 @@ class AsteroidsRLEnv:
             sizes = {asteroid.id: asteroid.size for asteroid in self.state.asteroids}
             result = self.simulation.step({self.agent_id: action, **companions})
             self.state = result.snapshot
+            self._record_asteroid_events(result.events, sizes)
             hits, event_reward = self._record_events(result.events, sizes)
             asteroid_hits += hits
             arcade_reward += event_reward
@@ -551,8 +739,9 @@ class AsteroidsRLEnv:
                     reward += aim_reward
                     self.metrics.aim_progress_reward += aim_reward
             if self.reward_config.safety_progress:
+                safety_after = 0.0 if terminated else self._safety_potential()
                 safety_reward = self.reward_config.safety_progress * (
-                    self._safety_potential() - safety_before)
+                    safety_after - safety_before)
                 reward += safety_reward
                 self.metrics.safety_progress_reward += safety_reward
         self.metrics.decisions += 1
@@ -573,6 +762,20 @@ class AsteroidsRLEnv:
                 - ship_now.radius - rock.radius for rock in self.state.asteroids)
             self.metrics.minimum_clearance = (clearance if self.metrics.minimum_clearance is None
                                               else min(self.metrics.minimum_clearance, clearance))
+        # Separation from the nearest live teammate. Teammate kills land at a median of 108px
+        # while a collision needs 28px, so this is the quantity that decides whether a round
+        # is survivable -- and nothing was recording it.
+        mates = [other for other in self.state.ships
+                 if other.id != self.agent_id and other.alive]
+        if mates:
+            gap = min(wrapped_delta(origin_now, Vec2(other.x, other.y),
+                                    self.state.width, self.state.height).length()
+                      for other in mates)
+            self.metrics.mean_teammate_distance += (
+                gap - self.metrics.mean_teammate_distance) / count
+            self.metrics.minimum_teammate_distance = (
+                gap if self.metrics.minimum_teammate_distance is None
+                else min(self.metrics.minimum_teammate_distance, gap))
         if self.reward_config is None:
             self.metrics.asteroid_reward += hit_reward
         else:
@@ -595,9 +798,19 @@ class AsteroidsRLEnv:
         if timed_out or stalled:
             truncated = True
             self.metrics.survived_to_limit = not stalled
+            # A co-operative round is cleared by the TEAM lasting it, not by the learner
+            # outliving its partner. Scoring the agent alone made shooting the teammate a
+            # *winning* move: measured on coop2-v2, the policy cleared warm-up 1 in 30 of 30
+            # episodes while killing its partner in all 30, and that 0.92 clear rate is what
+            # promoted it. No penalty can outweigh an objective that rewards the behaviour.
+            self.metrics.team_survived_to_limit = bool(
+                self.metrics.survived_to_limit
+                and all(ship.alive for ship in self.state.ships))
             self.metrics.stalled_out = stalled
+            cleared_round = (self.metrics.team_survived_to_limit if self.companion_ids
+                             else self.metrics.survived_to_limit)
             if self.reward_config is not None:
-                if self.completion == "survival" and self.metrics.survived_to_limit:
+                if self.completion == "survival" and cleared_round:
                     # Lasting the whole round is the objective; charging the wave-mode
                     # timeout penalty here would punish the agent for succeeding.
                     reward += self.reward_config.round_clear
@@ -620,7 +833,8 @@ class AsteroidsRLEnv:
         self.metrics.reward += reward
         if terminated or truncated:
             self.metrics.completed_stage = (
-                self.metrics.survived_to_limit if self.completion == "survival" else
+                (self.metrics.team_survived_to_limit if self.companion_ids
+                 else self.metrics.survived_to_limit) if self.completion == "survival" else
                 (self.state.terminal_reason is not None
                  and self.state.terminal_reason.value == "waves_cleared"))
             self.metrics.terminal_reason = (
@@ -689,6 +903,35 @@ class AsteroidsRLEnv:
                 if self.reward_config is not None:
                     reward -= self.reward_config.death_penalty
                     self.metrics.death_penalty += self.reward_config.death_penalty
+            elif (event.kind == "ship_destroyed"
+                  and event.entity_id in self.companion_ids):
+                # An asteroid killed the partner. Nobody's fault, and free until now -- which
+                # left the agent no reason to protect it.
+                reward -= self._charge_teammate_death()
+            elif event.kind == "ship_collision" and self.agent_id in (
+                    event.entity_id, event.detail):
+                # A collision kills both participants, so the agent is dead either way.
+                self.metrics.ship_collisions += 1
+                if self.reward_config is not None:
+                    reward -= self.reward_config.collision_penalty
+                    self.metrics.collision_penalty += self.reward_config.collision_penalty
+                reward -= self._charge_teammate_death()   # the collision killed both
+            elif event.kind == "friendly_fire":
+                # entity_id is the ship that was hit; detail is whose projectile hit it.
+                if event.entity_id == self.agent_id:
+                    self.metrics.friendly_fire_taken += 1
+                    if self.reward_config is not None:
+                        reward -= self.reward_config.friendly_fire_penalty
+                        self.metrics.friendly_fire_penalty += (
+                            self.reward_config.friendly_fire_penalty)
+                else:
+                    if event.detail == self.agent_id:
+                        self.metrics.friendly_fire_dealt += 1
+                        if self.reward_config is not None:
+                            reward -= self.reward_config.friendly_fire_dealt_penalty
+                            self.metrics.friendly_fire_dealt_penalty += (
+                                self.reward_config.friendly_fire_dealt_penalty)
+                    reward -= self._charge_teammate_death()
         # Every hit resolves the projectile immediately.
         self.metrics.shots_resolved += asteroid_hits
         return asteroid_hits, reward
@@ -697,6 +940,17 @@ class AsteroidsRLEnv:
         # Encode against strictly past positions, then fold this decision into the history,
         # so an asteroid's own current position never appears as its own history.
         observation = self._observe_as(state, self.agent_id)
+        # Companions must be encoded here too, on the same side of the history record.
+        # They act on the next step() call, by which point this decision's positions are
+        # already in `self._history` -- so encoding them there put each asteroid's CURRENT
+        # position at the head of its own history, the exact thing the line above avoids.
+        # A policy reads velocity out of that gap, so every companion saw a frozen world and
+        # led its shots as if nothing were moving. Measured on coop2-v4 with one set of
+        # weights flying both ships: the learner killed its teammate in 7% of episodes and
+        # the companion killed the learner in 40%, from identical parameters.
+        self._companion_observations = {
+            ship_id: self._observe_as(state, ship_id)
+            for ship_id in self.companion_ids} if self.companion_policy is not None else {}
         self._record_history()
         return observation
 
@@ -713,6 +967,8 @@ class AsteroidsRLEnv:
             self.frame_skip, self._history, self.history_frames, self.history_slots,
             self.max_projectiles, self.max_teammates, self.reveal_progress,
             global_features=self.global_features,
+            observation_version=self.observation_version,
+            asteroid_context=self._asteroid_context,
             spawn_phase=self.simulation.spawn_phase)
 
     def _companion_actions(self) -> dict[str, Action]:
@@ -725,6 +981,9 @@ class AsteroidsRLEnv:
             ship = next((s for s in self.state.ships if s.id == ship_id), None)
             if ship is None or not ship.alive:
                 continue
-            index = int(self.companion_policy(self._observe_as(self.state, ship_id)))
+            observation = self._companion_observations.get(ship_id)
+            if observation is None:                 # a ship that spawned since the encode
+                observation = self._observe_as(self.state, ship_id)
+            index = int(self.companion_policy(observation))
             actions[ship_id] = self.actions[max(0, min(index, len(self.actions) - 1))]
         return actions

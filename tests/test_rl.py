@@ -1983,6 +1983,28 @@ def test_curriculum_promotion_uses_the_pooled_retention_rule():
     assert manager.promotion_history[-1] is False
 
 
+def test_promotion_pool_can_be_recovered_from_a_pre_pooling_log(tmp_path):
+    import json
+    from asteroid_survival.rl.curriculum import promotion_samples_from_log
+
+    log = tmp_path / "evaluation.jsonl"
+    records = []
+    for episode, clear in ((500, 0.70), (1000, 0.75), (1500, 0.80),
+                           (2000, 0.85), (2500, 0.90)):
+        records.append({
+            "episode": episode, "training_stage": 1,
+            "stages": [{}, {"completion_rate": 0.95, "clear_rate": clear,
+                              "mean_accuracy": 0.06, "episodes": 64}],
+        })
+    log.write_text("".join(json.dumps(record) + "\n" for record in records),
+                   encoding="utf-8")
+
+    samples = promotion_samples_from_log(log, 1, 4, through_episode=2000)
+    assert len(samples) == 4
+    assert [sample["clear_rate"] for sample in samples] == [0.70, 0.75, 0.80, 0.85]
+    assert sum(sample["episodes"] for sample in samples) == 256
+
+
 def test_versus_labels_are_short_and_stay_unique():
     from asteroid_survival.rl.comparison import contender_label
 

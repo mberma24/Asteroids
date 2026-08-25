@@ -758,3 +758,207 @@ def test_shooting_a_teammate_costs_more_than_merely_losing_one():
     assert shot > lost
     # And both have to stay below what co-operating pays, or the ordering inverts.
     assert shot < reward.survival_bonus * 450 + reward.round_clear
+
+
+def test_centralized_team_env_exposes_two_actions_and_complete_local_views():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
+
+    env = CentralizedTeamEnv(seed=3, force_stage=0)
+    observation, info = env.reset(seed=123)
+    assert observation.shape == (2 * env.local_width,)
+    assert env.action_space.n == 16 * 16
+    assert env.action_masks().shape == (16 * 16,)
+    assert set(info["controller_order"]) == {"ship1", "ship2"}
+
+
+def test_centralized_actions_are_mapped_to_both_ships_in_the_same_frames():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
+
+    env = CentralizedTeamEnv(seed=2, force_stage=0)
+    env.reset(seed=9)
+    before = {ship.id: ship.angle for ship in env.native.state.ships}
+    order = env._order
+    env.step(1 * 16 + 2)  # left for the first controller slot, right for the second
+    after = {ship.id: ship.angle for ship in env.native.state.ships}
+    left_delta = (after[order[0]] - before[order[0]] + np.pi) % (2 * np.pi) - np.pi
+    right_delta = (after[order[1]] - before[order[1]] + np.pi) % (2 * np.pi) - np.pi
+    assert left_delta < 0 < right_delta
+
+
+def test_centralized_team_fails_immediately_when_either_ship_dies():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
+
+    env = CentralizedTeamEnv(seed=4, force_stage=3)
+    env.reset(seed=22)
+    env.native.simulation._ships[1].alive = False
+    _, reward, terminated, truncated, info = env.step(0)
+    assert terminated and not truncated
+    assert not info["episode_metrics"]["is_success"]
+    assert reward <= -20.0
+
+
+def test_centralized_mask_blocks_a_shot_through_the_teammate_even_across_wrap():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.actions import Action
+    from asteroid_survival.math2d import Vec2
+    from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
+
+    env = CentralizedTeamEnv(seed=4, force_stage=2)
+    env.reset(seed=22)
+    first, second = env.native.simulation._ships
+    first.pos, first.angle = Vec2(100.0, 450.0), 0.0
+    second.pos = Vec2(300.0, 450.0)
+    env.native.state = env.native.simulation.snapshot()
+    masks = env.native.action_masks()
+    assert not masks[first.id][Action.FIRE]
+    first.angle = np.pi
+    env.native.state = env.native.simulation.snapshot()
+    assert env.native.action_masks()[first.id][Action.FIRE]
+
+
+def test_centralized_joint_mask_allows_one_shooter_but_not_two():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.actions import Action
+    from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
+
+    env = CentralizedTeamEnv(seed=8, force_stage=0)
+    env.reset(seed=47)
+    mask = env.action_masks().reshape(16, 16)
+    assert mask[Action.FIRE, Action.NOOP] or mask[Action.NOOP, Action.FIRE]
+    assert not mask[Action.FIRE, Action.FIRE]
+
+
+def test_team_success_requires_both_ships_and_wave_warmup_requires_shooting():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
+
+    survival = CentralizedTeamEnv(seed=5, force_stage=4)
+    survival.reset(seed=31)
+    survival.native.max_decisions = 1
+    _, reward, terminated, truncated, info = survival.step(0)
+    assert truncated and not terminated
+    assert info["episode_metrics"]["is_success"]
+    assert reward >= 30.0
+
+    wave = CentralizedTeamEnv(seed=5, force_stage=0)
+    wave.reset(seed=31)
+    wave.native.max_decisions = 1
+    _, reward, _, truncated, info = wave.step(0)
+    assert truncated
+    assert not info["episode_metrics"]["is_success"]
+    assert reward < 0.0
+
+
+def test_team_curriculum_forces_shooting_then_adds_hazards_one_at_a_time():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.rl.team_ppo import team_curriculum, team_stage_config
+
+    stages = team_curriculum()
+    assert len(stages) == 103
+    assert all(stage.completion == "waves" and stage.composition for stage in stages[:4])
+    assert [team_stage_config(stage).ship.friendly_collisions for stage in stages[:4]] == [
+        "off", "ships", "full", "full"]
+    assert all(team_stage_config(stage).ship.friendly_collisions == "full"
+               for stage in stages[4:])
+    assert all(stage.completion == "survival" for stage in stages[4:])
+
+
+def test_a_companion_sees_exactly_what_it_would_see_as_the_learner():
+    """The same ship, in the same world, must get the same observation either way.
+
+    Companion actions used to be encoded at the top of `step()`, one line after
+    `_observation()` had already folded this decision's asteroid positions into the shared
+    history -- so every companion read its own present as its most recent past. Velocity is
+    inferred from that gap, so companions flew as if the world were frozen and led every shot
+    wrong. With one set of weights in both ships, coop2-v4's learner killed its teammate in
+    7% of episodes while its companion killed the learner in 40%.
+    """
+    import numpy as np
+    from asteroid_survival.rl.curriculum import load_curriculum
+    from asteroid_survival.rl.ppo import _stage_env
+
+    spec = load_curriculum("configs/rl-coop2-scratch.toml")
+    layout = {"history_frames": 4, "history_long_frames": 2, "history_long_stride": 8,
+              "max_projectiles": 8, "version": spec.observation_version}
+
+    def run(agent_id):
+        """Fly every ship with one fixed action, so both runs share a single trajectory."""
+        seen = []
+        # The spy records what the policy is actually handed, not what the env cached --
+        # inspecting the cache would pass no matter when the companion was encoded.
+        env = _stage_env(spec, 0, layout, lambda observation: seen.append(
+            np.asarray(observation, dtype=np.float64)) or 3)
+        env.rotate_agent_slot = False    # this test pins the seat on purpose
+        env.agent_id = agent_id
+        env.companion_ids = [ship.id for ship in env.config.ships if ship.id != agent_id]
+        learner_seen = []
+        observation, _ = env.reset(seed=4242)
+        for _ in range(12):
+            learner_seen.append(np.asarray(observation, dtype=np.float64))
+            observation, _, terminated, truncated, _ = env.step(3)
+            if terminated or truncated:
+                break
+        return learner_seen, seen
+
+    as_learner, _ = run("ship2")     # ship2 flies as the learner
+    _, as_companion = run("ship1")   # ship2 flies as ship1's companion
+    assert len(as_companion) >= 6, "not enough decisions to be a meaningful comparison"
+
+    for index, (learner_view, companion_view) in enumerate(zip(as_learner, as_companion)):
+        assert np.allclose(learner_view, companion_view, atol=1e-9), (
+            f"ship2's observation differs at decision {index} depending on whether it is "
+            f"the learner or a companion; {int((learner_view != companion_view).sum())} of "
+            f"{learner_view.size} features disagree")
+
+
+def test_the_learner_does_not_always_fly_the_same_ship():
+    """Both seats must receive gradient, and a seed must still mean one fixed episode.
+
+    Ships spawn at fixed mirrored poses (ship1 at y=370 facing up, ship2 at y=530 facing
+    down) and the policy is not equivariant to that mirroring, so training only ever in
+    ship1's seat optimises one pose and leaves the other unshaped. Measured on coop2-v4 at
+    28,000 episodes with one set of weights in both ships: ship2 shot ship1 in 35-37% of
+    episodes against ship1's 5-8%, and the gap followed the SEAT, not which ship was
+    learning. Friendly fire from the unshaped seat ended 60% of that run's episodes.
+    """
+    from asteroid_survival.rl.curriculum import load_curriculum
+    from asteroid_survival.rl.ppo import _stage_env
+
+    spec = load_curriculum("configs/rl-coop2-scratch.toml")
+    layout = {"history_frames": 4, "history_long_frames": 2, "history_long_stride": 8,
+              "max_projectiles": 8, "version": spec.observation_version}
+    env = _stage_env(spec, 0, layout, lambda observation: 0)
+    assert env.rotate_agent_slot, "a two-ship stage must rotate the learner's seat"
+
+    seats = set()
+    for seed in range(200):
+        env.reset(seed=seed)
+        seats.add(env.agent_id)
+        assert env.companion_ids == [ship.id for ship in env.config.ships
+                                     if ship.id != env.agent_id]
+    assert seats == {"ship1", "ship2"}, f"both seats must be flown, got {seats}"
+
+    # Reproducible: the same seed is always the same episode, so evaluation panels are
+    # unaffected and a seed can still be replayed.
+    for seed in (0, 17, 4242):
+        env.reset(seed=seed)
+        first = env.agent_id
+        env.reset(seed=seed)
+        assert env.agent_id == first
+
+
+def test_a_solo_stage_never_rotates_the_seat():
+    from asteroid_survival.rl.curriculum import load_curriculum
+    from asteroid_survival.rl.ppo import _stage_env
+
+    spec = load_curriculum("configs/rl-survival-v2.toml")
+    layout = {"history_frames": 4, "history_long_frames": 2, "history_long_stride": 8,
+              "max_projectiles": 8, "version": spec.observation_version}
+    env = _stage_env(spec, 0, layout, None)
+    assert not env.rotate_agent_slot
+    for seed in range(20):
+        env.reset(seed=seed)
+        assert env.agent_id == env.config.ships[0].id

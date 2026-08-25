@@ -95,7 +95,7 @@ class Simulation:
         self.object_health = self.config.objective.object_health
         center = Vec2(self.config.arena.width / 2, self.config.arena.height / 2)
         count = len(self.config.ships)
-        ring = 80.0 if count > 1 or self.config.objective.protect else 0.0
+        ring = self.config.ship.spawn_radius if count > 1 or self.config.objective.protect else 0.0
         for i, spec in enumerate(self.config.ships):
             angle = -math.pi / 2 + i * 2 * math.pi / count
             self._ships.append(_Ship(spec.id, center + from_angle(angle) * ring, Vec2(), angle))

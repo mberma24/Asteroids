@@ -26,7 +26,8 @@ from ..simulation import ASTEROID_RADII, Simulation
 from .curriculum import load_curriculum
 from .environment import (ASTEROID_FEATURES, GLOBAL_FEATURES, MOBILE_ACTIONS,
                           MOBILE_SHIP_FEATURES, PROJECTILE_FEATURES, TEAMMATE_FEATURES,
-                          encode_observation, history_offsets)
+                          RewardConfig, encode_observation, global_feature_count,
+                          history_offsets)
 
 OBJECTIVE_FEATURES = 8
 TEAM_LEVEL_ROUNDS = (29, 35, 41, 47, 53, 59, 65, 71, 77, 83, 89, 96)
@@ -70,7 +71,12 @@ class MultiAgentAsteroidsEnv:
                  max_asteroids: int | None = None,
                  max_decisions: int = 450, frame_skip: int = 4,
                  history_frames: int = 8, history_long_frames: int = 8,
-                 history_long_stride: int = 8):
+                 history_long_stride: int = 8,
+                 reward_config: RewardConfig | None = None,
+                 completion: str = "survival",
+                 terminate_on_team_death: bool = False,
+                 observation_version: int = 7,
+                 mask_unsafe_fire: bool = False):
         if len(config.ships) > max_ships:
             raise ValueError("config has more ships than max_ships")
         self.config = config
@@ -91,6 +97,11 @@ class MultiAgentAsteroidsEnv:
         self.decisions = 0
         self.initial_health = max(1, config.objective.object_health)
         self.initial_ship_count = len(config.ships)
+        self.reward_config = reward_config
+        self.completion = completion
+        self.terminate_on_team_death = bool(terminate_on_team_death)
+        self.observation_version = int(observation_version)
+        self.mask_unsafe_fire = bool(mask_unsafe_fire)
         self.metrics: dict = {}
 
     @property
@@ -99,7 +110,7 @@ class MultiAgentAsteroidsEnv:
                 + self.max_asteroids * (ASTEROID_FEATURES + 2 * len(self.history_slots))
                 + self.max_projectiles * PROJECTILE_FEATURES
                 + self.max_teammates * TEAMMATE_FEATURES
-                + GLOBAL_FEATURES + OBJECTIVE_FEATURES)
+                + global_feature_count(self.observation_version) + OBJECTIVE_FEATURES)
 
     def reset(self, seed: int = 0) -> tuple[dict[str, np.ndarray], dict]:
         self.state = self.simulation.reset(seed)
@@ -109,6 +120,8 @@ class MultiAgentAsteroidsEnv:
             "seed": seed, "alive_ship_time": 0.0, "ship_deaths": 0,
             "ship_collisions": 0, "friendly_fire": 0, "object_damage": 0,
             "asteroids_destroyed": 0, "reward": 0.0,
+            "shots_fired": 0, "shots_missed": 0, "shots_resolved": 0,
+            "is_success": False,
         }
         observations = self._observations()
         self._record_history()
@@ -142,7 +155,8 @@ class MultiAgentAsteroidsEnv:
                 self.state, ship.id, self.config, self.max_decisions, self.max_asteroids,
                 self.frame_skip, self._history, len(self.history_slots), self.history_slots,
                 self.max_projectiles, self.max_teammates, False,
-                global_features=True, spawn_phase=self.simulation.spawn_phase)
+                observation_version=self.observation_version,
+                spawn_phase=self.simulation.spawn_phase)
             result[ship.id] = np.concatenate((local, self._objective(ship.id)))
         return result
 
@@ -170,8 +184,38 @@ class MultiAgentAsteroidsEnv:
                 for action in MOBILE_ACTIONS:
                     if action.fire:
                         mask[int(action)] = False
+            if ship.alive and self.mask_unsafe_fire:
+                others = [other for other in self.state.ships
+                          if other.id != ship.id and other.alive]
+                for action in MOBILE_ACTIONS:
+                    if action.fire and self._unsafe_fire(ship, action, others):
+                        mask[int(action)] = False
             masks[ship.id] = mask
         return masks
+
+    def _unsafe_fire(self, ship, action: Action, others: list) -> bool:
+        """Whether firing on the action's first frame crosses a teammate's hit circle."""
+        angle = ship.angle + action.turn * self.config.ship.turn_speed / self.config.arena.fps
+        dx, dy = math.cos(angle), math.sin(angle)
+        lifetime = self.config.projectile.lifetime
+        bullet_vx = self.config.projectile.speed * dx
+        bullet_vy = self.config.projectile.speed * dy
+        margin = self.config.ship.radius + self.config.projectile.radius + 16.0
+        for other in others:
+            # Test periodic images explicitly: long-lived bullets can cross a seam and hit a
+            # teammate whose shortest wrapped displacement lies behind the shooter.
+            for x_wrap in (-self.state.width, 0, self.state.width):
+                for y_wrap in (-self.state.height, 0, self.state.height):
+                    rx = other.x + x_wrap - ship.x
+                    ry = other.y + y_wrap - ship.y
+                    rvx, rvy = other.vx - bullet_vx, other.vy - bullet_vy
+                    speed2 = rvx * rvx + rvy * rvy
+                    closest = (max(0.0, min(lifetime, -(rx * rvx + ry * rvy) / speed2))
+                               if speed2 > 1e-9 else 0.0)
+                    gap = math.hypot(rx + rvx * closest, ry + rvy * closest)
+                    if closest > 0.0 and gap <= margin:
+                        return True
+        return False
 
     def step(self, actions: dict[str, int]):
         if self.state is None:
@@ -181,6 +225,7 @@ class MultiAgentAsteroidsEnv:
         elapsed_start = self.state.elapsed
         events = []
         hit_value = 0.0
+        shots_fired = shots_expired = 0
         for _ in range(self.frame_skip):
             sizes = {rock.id: rock.size for rock in self.state.asteroids}
             mapped = {ship_id: MOBILE_ACTIONS[int(index)]
@@ -191,7 +236,18 @@ class MultiAgentAsteroidsEnv:
             for event in result.events:
                 if event.kind == "asteroid_shot":
                     size = sizes.get(int(event.entity_id), 0)
-                    hit_value += {3: 0.6, 2: 0.3, 1: 0.15}.get(size, 0.0)
+                    weights = ({3: self.reward_config.large, 2: self.reward_config.medium,
+                                1: self.reward_config.small}
+                               if self.reward_config is not None else
+                               {3: 0.6, 2: 0.3, 1: 0.15})
+                    hit_value += weights.get(size, 0.0)
+                elif event.kind == "projectile_fired":
+                    shots_fired += 1
+                elif event.kind == "projectile_expired":
+                    shots_expired += 1
+            if (self.terminate_on_team_death
+                    and len(self.alive_ids) < self.initial_ship_count):
+                break
             if result.terminated or result.truncated:
                 break
         self.decisions += 1
@@ -202,19 +258,42 @@ class MultiAgentAsteroidsEnv:
         friendly = sum(event.kind == "friendly_fire" for event in events)
         damage = max(0, before_health - self.state.objective.health)
         normal = self.frame_skip / self.config.arena.fps
-        reward = 0.10 * (alive / self.initial_ship_count) * elapsed / normal
-        reward += hit_value / self.initial_ship_count
-        reward -= 5.0 * newly_dead / self.initial_ship_count
-        reward -= 2.0 * (collisions + friendly) / self.initial_ship_count
-        if self.config.objective.protect:
-            reward -= 10.0 * damage / self.initial_health
+        if self.reward_config is None:
+            reward = 0.10 * (alive / self.initial_ship_count) * elapsed / normal
+            reward += hit_value / self.initial_ship_count
+            reward -= 5.0 * newly_dead / self.initial_ship_count
+            reward -= 2.0 * (collisions + friendly) / self.initial_ship_count
+            if self.config.objective.protect:
+                reward -= 10.0 * damage / self.initial_health
+        else:
+            intact = alive == self.initial_ship_count
+            fraction = elapsed / normal if self.reward_config.time_scaled_survival else 1.0
+            reward = self.reward_config.survival_bonus * fraction if intact else 0.0
+            reward += hit_value
+            if newly_dead:
+                reward -= self.reward_config.death_penalty
+            reward -= self.reward_config.collision_penalty * collisions
+            reward -= self.reward_config.friendly_fire_dealt_penalty * friendly
+            reward -= self.reward_config.miss_penalty * shots_expired
+            if self.config.objective.protect:
+                reward -= 10.0 * damage / self.initial_health
         timed_out = self.decisions >= self.max_decisions and not self.state.terminated
-        terminated = bool(self.state.terminated)
+        team_failed = self.terminate_on_team_death and alive < self.initial_ship_count
+        terminated = bool(self.state.terminated or team_failed)
         truncated = bool(self.state.truncated or timed_out)
-        if timed_out:
+        wave_cleared = (self.state.terminal_reason is not None
+                        and self.state.terminal_reason.value == "waves_cleared")
+        success = bool(alive == self.initial_ship_count and (
+            timed_out if self.completion == "survival" else wave_cleared))
+        if self.reward_config is None and timed_out:
             reward += 10.0 * alive / self.initial_ship_count
             if self.config.objective.protect:
                 reward += 10.0 * max(0, self.state.objective.health) / self.initial_health
+        elif self.reward_config is not None:
+            if success:
+                reward += self.reward_config.round_clear
+            elif (timed_out or wave_cleared) and self.completion == "waves":
+                reward -= self.reward_config.timeout_penalty
         if terminated and self.state.objective.enabled and self.state.objective.health <= 0:
             reward -= 10.0
         self.metrics["alive_ship_time"] += elapsed * alive / self.initial_ship_count
@@ -224,6 +303,16 @@ class MultiAgentAsteroidsEnv:
         self.metrics["object_damage"] += damage
         self.metrics["asteroids_destroyed"] += sum(
             event.kind == "asteroid_shot" for event in events)
+        self.metrics["shots_fired"] += shots_fired
+        self.metrics["shots_missed"] += shots_expired
+        self.metrics["shots_resolved"] += shots_expired + sum(
+            event.kind == "asteroid_shot" for event in events)
+        if (terminated or truncated) and self.reward_config is not None:
+            unresolved = max(0, self.metrics["shots_fired"] - self.metrics["shots_resolved"])
+            reward -= self.reward_config.miss_penalty * unresolved
+            self.metrics["shots_missed"] += unresolved
+            self.metrics["shots_resolved"] += unresolved
+        self.metrics["is_success"] = success
         self.metrics["reward"] += reward
         observations = self._observations()
         self._record_history()
@@ -235,6 +324,7 @@ class MultiAgentAsteroidsEnv:
                 "alive_ship_time_fraction": self.metrics["alive_ship_time"] /
                     max(duration, 1e-9),
                 "all_ships_survived": alive == self.initial_ship_count,
+                "completed_stage": success,
                 "final_alive_fraction": alive / self.initial_ship_count,
                 "object_survived": not self.state.objective.enabled
                     or self.state.objective.health > 0,

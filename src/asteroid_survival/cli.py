@@ -403,6 +403,9 @@ def main(argv: list[str] | None = None) -> int:
         "--ent-coef", type=float,
         help="override the entropy bonus, keeping every other resumed setting")
     ppo_parser.add_argument(
+        "--vf-coef", type=float,
+        help="override the value-loss coefficient, keeping every other resumed setting")
+    ppo_parser.add_argument(
         "--entropy-floor", type=float,
         help="hold policy entropy near NATS by adapting the entropy bonus between "
              "updates; 0 clears a floor restored from a checkpoint")
@@ -439,6 +442,17 @@ def main(argv: list[str] | None = None) -> int:
     mappo_parser.add_argument("--resume", type=Path)
     mappo_parser.add_argument("--seed", type=int, default=0)
     mappo_parser.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
+    team_train = sub.add_parser(
+        "train-team", help="train centralized PPO controlling both ships jointly")
+    team_train.add_argument("--output", type=Path, default=Path("models/team-ppo"))
+    team_train.add_argument("--steps", type=int, default=1_000_000)
+    team_train.add_argument("--parallel-envs", type=int, default=8)
+    team_train.add_argument("--eval-every", type=int, default=250_000)
+    team_train.add_argument("--eval-episodes", type=int, default=128)
+    team_train.add_argument("--resume", type=Path)
+    team_train.add_argument("--seed", type=int, default=0)
+    team_train.add_argument("--stop-when-mastered", action="store_true")
+    team_train.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
     team_eval = sub.add_parser("evaluate-team", help="score a shared MAPPO checkpoint")
     team_eval.add_argument("--checkpoint", type=Path, required=True)
     team_eval.add_argument("--episodes", type=int, default=64)
@@ -446,12 +460,16 @@ def main(argv: list[str] | None = None) -> int:
     team_eval.add_argument("--level", type=int, default=12)
     team_eval.add_argument("--protect", action="store_true")
     team_eval.add_argument("--seed", type=int, default=20_000)
+    team_eval.add_argument("--stage", type=int,
+                           help="one-based centralized team curriculum stage")
     team_play = sub.add_parser("play-team", help="watch 1-8 copies of a shared actor")
     team_play.add_argument("--checkpoint", type=Path, required=True)
     team_play.add_argument("--ships", type=int, default=8)
     team_play.add_argument("--level", type=int, default=12)
     team_play.add_argument("--protect", action="store_true")
     team_play.add_argument("--seed", type=int, default=7)
+    team_play.add_argument("--stage", type=int,
+                           help="one-based centralized team curriculum stage")
     graph_parser = sub.add_parser("graph", help="graph held-out progress for a model run")
     graph_parser.add_argument("--run", type=Path, required=True)
     graph_parser.add_argument("--output", type=Path)
@@ -619,7 +637,8 @@ def main(argv: list[str] | None = None) -> int:
             resume=args.resume, initialize_from=args.initialize_from,
             start_stage=(args.start_stage - 1) if args.start_stage is not None else 0,
             device=args.device, learning_rate=args.learning_rate,
-            ent_coef=args.ent_coef, entropy_floor=args.entropy_floor,
+            ent_coef=args.ent_coef, vf_coef=args.vf_coef,
+            entropy_floor=args.entropy_floor,
             settings=ppo_settings, stop_when_mastered=args.stop_when_mastered,
             encoder=args.encoder)
         print(f"saved checkpoint: {checkpoint}")
@@ -632,14 +651,39 @@ def main(argv: list[str] | None = None) -> int:
             initialize_from=args.initialize_from, resume=args.resume)
         print(f"saved checkpoint: {checkpoint}")
         return 0
+    if args.command == "train-team":
+        from .rl.team_ppo import train_centralized_team
+        checkpoint = train_centralized_team(
+            args.output, steps=args.steps, seed=args.seed,
+            parallel_envs=args.parallel_envs, eval_every=args.eval_every,
+            eval_episodes=args.eval_episodes, device=args.device,
+            resume=args.resume, stop_when_mastered=args.stop_when_mastered)
+        print(f"saved checkpoint: {checkpoint}")
+        return 0
     if args.command == "evaluate-team":
-        from .rl.multiagent import evaluate_shared_mappo
-        report = evaluate_shared_mappo(
-            args.checkpoint, episodes=args.episodes, ships=args.ships,
-            level=args.level, protect=args.protect, seed=args.seed)
+        metadata = json.loads(
+            (args.checkpoint / "metadata.json").read_text(encoding="utf-8"))
+        if metadata.get("algorithm") == "centralized_team_ppo":
+            from .rl.team_ppo import evaluate_centralized_team
+            stage = ((args.stage - 1) if args.stage is not None else
+                     int(metadata.get("stage", 0)))
+            report = evaluate_centralized_team(
+                args.checkpoint, stage=stage, episodes=args.episodes, seed=args.seed)
+        else:
+            from .rl.multiagent import evaluate_shared_mappo
+            report = evaluate_shared_mappo(
+                args.checkpoint, episodes=args.episodes, ships=args.ships,
+                level=args.level, protect=args.protect, seed=args.seed)
         print(json.dumps(report, indent=2))
         return 0
     if args.command == "play-team":
+        metadata = json.loads(
+            (args.checkpoint / "metadata.json").read_text(encoding="utf-8"))
+        if metadata.get("algorithm") == "centralized_team_ppo":
+            from .rl.team_ppo import play_centralized_team
+            return play_centralized_team(
+                args.checkpoint, stage=(args.stage - 1) if args.stage else None,
+                seed=args.seed)
         from .rl.multiagent import play_shared_mappo
         return play_shared_mappo(
             args.checkpoint, ships=args.ships, level=args.level,

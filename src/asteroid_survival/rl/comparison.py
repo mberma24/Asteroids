@@ -27,7 +27,8 @@ REPORTED = ("survival_time", "wave", "asteroids_destroyed", "accuracy", "shots_f
 def _make_env(config: GameConfig, max_decisions: int, asteroid_reward: float,
               shot_penalty: float, history_frames: int = 0, history_long_frames: int = 0,
               history_long_stride: int = 8, max_projectiles: int = 8,
-              global_features: bool = False, completion: str = "waves",
+              global_features: bool = False, observation_version: int | None = None,
+              completion: str = "waves",
               no_hit_seconds: float = 0.0) -> AsteroidsRLEnv:
     return AsteroidsRLEnv(config, frame_skip=4, max_decisions=max_decisions,
                           asteroid_reward=asteroid_reward, shot_penalty=shot_penalty,
@@ -36,6 +37,7 @@ def _make_env(config: GameConfig, max_decisions: int, asteroid_reward: float,
                           history_long_stride=history_long_stride,
                           max_projectiles=max_projectiles,
                           global_features=global_features,
+                          observation_version=observation_version,
                           completion=completion, no_hit_seconds=no_hit_seconds)
 
 
@@ -100,11 +102,9 @@ def ppo_episodes(config: GameConfig, checkpoint: str | Path, seeds: list[int],
 
     metadata = json.loads((Path(checkpoint) / "metadata.json").read_text(encoding="utf-8"))
     layout = metadata.get("observation_layout") or {}
-    # Observation v5 appends global threat features. Without this the scorer hands a v4
-    # observation to a v5 policy and stable-baselines3 rejects the shape outright, so
-    # `watch`/`compare`/`versus` could not score any v5 checkpoint at all.
+    # Recreate the exact versioned observation used by the checkpoint.
     env = _make_env(config, max_projectiles=int(layout.get("max_projectiles", 0)),
-                    global_features=int(layout.get("version", 4)) >= 5, **kwargs)
+                    observation_version=int(layout.get("version", 4)), **kwargs)
     controller = PPOController(checkpoint)
     episodes = []
     for episode_seed in seeds:

@@ -93,10 +93,12 @@ def preview_checkpoint(target: str | Path, *, seed: int = 10_000,
         history_long_stride=int(layout.get("history_long_stride", 8)),
         max_projectiles=int(layout.get("max_projectiles", 0)),
         reward_config=stage_reward, completion=stage.completion,
-        # Observation v5 appends the global difficulty block. Without it the environment is
-        # 16 inputs narrower than the policy expects and the shape check below rejects every
-        # current checkpoint, so no v5 model could be previewed at all.
-        global_features=int(layout.get("version", 4)) >= 5)
+        # Co-operative rounds put more than one ship on the field. Without this the
+        # observation is the solo width and a co-operative checkpoint will not load; the
+        # companion policy is attached below, once the controller exists.
+        max_teammates=int(layout.get("max_teammates", 0)),
+        # Recreate the checkpoint's exact versioned global block, including v6 position.
+        observation_version=int(layout.get("version", 4)))
     algorithm = metadata.get("algorithm", "muzero")
     if algorithm in {"ppo", "recurrent_ppo"}:
         from .ppo import PPOController
@@ -104,6 +106,11 @@ def preview_checkpoint(target: str | Path, *, seed: int = 10_000,
         observation_size = int(metadata["observation_size"])
         num_actions = int(metadata["num_actions"])
         label = "LSTM-PPO" if metadata.get("recurrent") else "PPO"
+        if env.companion_ids:
+            # Every ship flies the same weights, which is what the co-operative rounds train.
+            # A separate controller instance so a recurrent policy does not interleave its
+            # hidden state between the ships.
+            env.companion_policy = PPOController(checkpoint)
     else:
         from .muzero import MuZeroAgent
         agent = MuZeroAgent.load(checkpoint, seed=seed)

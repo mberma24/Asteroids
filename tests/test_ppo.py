@@ -288,6 +288,36 @@ def test_set_encoder_refuses_a_layout_it_does_not_match():
             projectile_slots=8, projectile_features=10)
 
 
+@pytest.mark.parametrize("target_inputs,new_inputs", [(1255, 4), (1265, 14)])
+def test_policy_widening_preserves_v5_behavior_and_zeros_new_inputs(
+        target_inputs, new_inputs):
+    import torch
+
+    from asteroid_survival.rl.ppo import widen_policy
+
+    class Policy(torch.nn.Module):
+        def __init__(self, inputs):
+            super().__init__()
+            self.input = torch.nn.Linear(inputs, 8)
+            self.output = torch.nn.Linear(8, 3)
+
+    class Model:
+        def __init__(self, inputs):
+            self.policy = Policy(inputs)
+
+    source = Model(1251)
+    target = Model(target_inputs)
+    widened = widen_policy(target, source, torch)
+
+    assert widened == 1
+    assert torch.equal(target.policy.input.weight[:, :1251],
+                       source.policy.input.weight)
+    assert torch.count_nonzero(target.policy.input.weight[:, 1251:]) == 0
+    assert target.policy.input.weight.shape[1] == 1251 + new_inputs
+    assert torch.equal(target.policy.input.bias, source.policy.input.bias)
+    assert torch.equal(target.policy.output.weight, source.policy.output.weight)
+
+
 def test_a_stalled_stage_still_advances_its_champion(tmp_path):
     """A run stuck below the promotion bar must still track its best policy.
 
@@ -521,3 +551,72 @@ def test_entropy_floor_round_trips_through_settings():
     assert PPOTrainSettings(**stored).entropy_floor == pytest.approx(0.8)
     old = {k: v for k, v in asdict(PPOTrainSettings()).items() if k != "entropy_floor"}
     assert PPOTrainSettings(**old).entropy_floor is None
+
+
+def test_parallel_evaluation_reproduces_the_serial_path_exactly():
+    """Fanning held-out seeds across processes must not move a single number.
+
+    Evaluation is the only trustworthy signal in this project, so the fast path has to be
+    indistinguishable from the slow one -- same seeds, same episodes, same aggregates. The
+    serial path stays for recurrent policies, whose hidden state makes episodes
+    order-dependent.
+    """
+    from dataclasses import replace
+
+    from asteroid_survival.rl.curriculum import load_curriculum
+    from asteroid_survival.rl.ppo import evaluate_ppo_stages, require_ppo
+
+    _, PPO, _, _, _ = require_ppo()
+    spec = load_curriculum("configs/rl-survival-v2.toml")
+    # Two-second rounds and two seeds each: enough to exercise both stages and the
+    # aggregation, cheap enough for the suite.
+    stages = tuple(replace(stage, max_seconds=2.0) for stage in spec.stages[:2])
+    spec = replace(spec, stages=stages, evaluation_episodes=2,
+                   retention_evaluation_episodes=2, retention_sample=1)
+    layout = {"history_frames": 8, "history_long_frames": 8, "history_long_stride": 8,
+              "max_projectiles": 8, "version": spec.observation_version}
+
+    from asteroid_survival.rl.ppo import _stage_env
+    env = _stage_env(spec, 1, layout)
+    model = PPO("MlpPolicy", CurriculumGymEnvForTest(env), n_steps=8, batch_size=8,
+                device="cpu", seed=0)
+
+    serial = evaluate_ppo_stages(model, False, spec, layout, 1, 10000, workers=1)
+    parallel = evaluate_ppo_stages(model, False, spec, layout, 1, 10000, workers=4)
+    assert serial == parallel
+    assert any(stage.get("episodes") for stage in serial)
+
+
+class CurriculumGymEnvForTest(gymnasium.Env):
+    """Minimal gym shell so PPO can be constructed against the real observation space."""
+
+    def __init__(self, env):
+        self._env = env
+        size = env.reset(0)[0].shape[0]
+        self.observation_space = gymnasium.spaces.Box(-np.inf, np.inf, (size,), np.float32)
+        self.action_space = gymnasium.spaces.Discrete(env.num_actions)
+
+    def reset(self, *, seed=None, options=None):
+        observation, info = self._env.reset(seed or 0)
+        return observation.astype(np.float32), info
+
+    def step(self, action):
+        observation, reward, terminated, truncated, info = self._env.step(int(action))
+        return observation.astype(np.float32), reward, terminated, truncated, info
+
+
+def test_vf_coef_override_reaches_the_algorithm_and_survives_a_resume(tmp_path):
+    """`--vf-coef` must set the live coefficient and be what a later resume restores.
+
+    SB3 reads `vf_coef` off the algorithm at every train() call, so assignment is enough --
+    but `settings` has to move with it, or a bare --resume silently reverts to 0.5. That is
+    the same trap `--learning-rate` fell into.
+    """
+    from asteroid_survival.rl.ppo import train_ppo_curriculum
+
+    output = train_ppo_curriculum(
+        "configs/rl-survival-v2.toml", tmp_path / "run", recurrent=False, episodes=1,
+        parallel_envs=1, eval_every=10_000, device="cpu", vf_coef=1.75,
+        history_frames=8, history_long_frames=8, history_long_stride=8)
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["settings"]["vf_coef"] == pytest.approx(1.75)

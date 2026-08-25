@@ -32,6 +32,8 @@ class ShipConfig:
     invulnerable: bool = False
     """Training aid: asteroids pass through ships without destroying either one."""
     friendly_collisions: str = "off"
+    spawn_radius: float = 80.0
+    """Initial distance from arena centre for multi-ship/objective layouts."""
     radius: float = 14.0
     acceleration: float = 220.0
     drag: float = 0.35
@@ -261,6 +263,8 @@ class GameConfig:
             raise ValueError("ship ids must be unique")
         if self.ship.friendly_collisions not in {"off", "ships", "full"}:
             raise ValueError("friendly_collisions must be off, ships, or full")
+        if self.ship.spawn_radius < 0:
+            raise ValueError("ship spawn_radius cannot be negative")
         if self.asteroid.spawn_mode not in {"interval", "wave"}:
             raise ValueError("spawn_mode must be interval or wave")
         if self.asteroid.wave_size < 1 or self.asteroid.wave_size_max < 1:

@@ -8,8 +8,8 @@ import statistics
 import numpy as np
 from pathlib import Path
 
-from .environment import (ASTEROID_FEATURES, GLOBAL_FEATURES, PROJECTILE_FEATURES,
-                          AsteroidsRLEnv, ship_feature_count)
+from .environment import (ASTEROID_FEATURES, PROJECTILE_FEATURES, AsteroidsRLEnv,
+                          global_feature_count, ship_feature_count)
 
 
 def training_seed(base: int, index: int, reserved_start: int, reserved_count: int) -> int:
@@ -37,7 +37,7 @@ def truncate_log(path: str | Path, episode: int) -> int:
 
 def observation_layout(env: AsteroidsRLEnv) -> dict:
     return {
-        "version": 5 if env.global_features else 4,
+        "version": env.observation_version,
         "ship_features": ship_feature_count(env.config),
         "asteroid_features": ASTEROID_FEATURES, "max_asteroids": env.max_asteroids,
         "projectile_features": PROJECTILE_FEATURES,
@@ -47,7 +47,7 @@ def observation_layout(env: AsteroidsRLEnv) -> dict:
         "history_long_stride": env.history_long_stride,
         "history_offsets": env.history_slots, "mobile": env.config.ship.mobile,
         "max_teammates": env.max_teammates,
-        "global_features": GLOBAL_FEATURES if env.global_features else 0,
+        "global_features": global_feature_count(env.observation_version),
         "reveal_progress": env.reveal_progress,
         "actions": [action.name for action in env.actions],
     }

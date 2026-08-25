@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import json
 import math
+import multiprocessing
+import os
+import tempfile
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -85,8 +89,8 @@ def _stage_env(spec, index: int, layout: dict,
         history_long_stride=int(layout.get("history_long_stride", 8)),
         max_projectiles=int(layout.get("max_projectiles", 8)), reward_config=reward,
         completion=stage.completion, max_teammates=spec.max_teammates,
-        companion_policy=companion_policy,
-        global_features=int(layout.get("version", 4)) >= 5)
+        companion_policy=companion_policy, rotate_agent_slot=True,
+        observation_version=int(layout.get("version", 4)))
 
 
 class PPOController:
@@ -152,30 +156,95 @@ def retention_stages(spec, stage: int, rotation: int) -> set[int]:
     reproducible from its seed. With a sample of ten and forty prior stages, every stage is
     revisited every fourth evaluation.
     """
-    prior = list(range(stage))
+    limit = int(getattr(spec, "retention_stage_limit", 0) or 0)
+    prior = list(range(min(stage, limit) if limit > 0 else stage))
     if spec.retention_sample <= 0 or len(prior) <= spec.retention_sample:
         return set(prior)
     start = (rotation * spec.retention_sample) % len(prior)
     return {prior[(start + offset) % len(prior)] for offset in range(spec.retention_sample)}
 
 
+# --- Parallel evaluation -------------------------------------------------------------
+#
+# Training runs `--parallel-envs` environments at once; evaluation used to loop seeds on a
+# single env, so every evaluation left all but one worker idle. Measured 2026-08-24, that
+# was 49.5s of every 113.7s -- 44% of wall-clock spent using one core. Seeds are independent
+# episodes of a deterministic policy, so fanning them across processes changes nothing about
+# the numbers: same seeds, same episodes, same aggregates.
+#
+# The serial path is kept and is still used for recurrent policies (whose hidden state makes
+# an episode order-dependent) and for team rounds with a companion policy (which is not
+# picklable). Those are correctness cases, not performance ones.
+
+_EVAL_WORKER: dict[str, Any] = {}
+
+
+def eval_worker_count(requested: int = 0) -> int:
+    """How many processes to fan evaluation across. 0 means auto."""
+    if requested > 0:
+        return requested
+    override = os.environ.get("PPO_EVAL_WORKERS")
+    if override and override.isdigit() and int(override) > 0:
+        return int(override)
+    return max(1, min(8, os.cpu_count() or 1))
+
+
+def _eval_worker_init(spec, layout: dict, model_path: str) -> None:
+    _, PPO, _, _, _ = require_ppo()
+    _EVAL_WORKER.clear()
+    _EVAL_WORKER["spec"] = spec
+    _EVAL_WORKER["layout"] = layout
+    _EVAL_WORKER["envs"] = {}
+    _EVAL_WORKER["model"] = PPO.load(model_path, device="cpu")
+
+
+def _eval_worker_episode(job: tuple[int, int]) -> dict:
+    """One held-out episode. Returns the same metrics dict the serial path collects."""
+    index, seed = job
+    envs = _EVAL_WORKER["envs"]
+    if index not in envs:
+        envs[index] = _stage_env(_EVAL_WORKER["spec"], index, _EVAL_WORKER["layout"])
+    env = envs[index]
+    model = _EVAL_WORKER["model"]
+
+    def policy(observation):
+        action, _ = model.predict(observation, deterministic=True)
+        return int(np.asarray(action).item())
+
+    return evaluate_policy(env, policy, [seed])["episodes"][0]
+
+
 def evaluate_ppo_stages(model, recurrent: bool, spec, layout: dict, stage: int,
                         eval_seed: int, rotation: int = 0,
-                        companion_snapshot=None) -> list[dict]:
-    results = []
+                        companion_snapshot=None, workers: int = 0) -> list[dict]:
+    import statistics
+
     companion = (SnapshotPolicy(companion_snapshot, recurrent)
                  if companion_snapshot and spec.max_teammates else None)
     scored = retention_stages(spec, stage, rotation)
-    for index, stage_spec in enumerate(spec.stages[:stage + 1]):
+    panel = rotation % max(1, spec.evaluation_panels)
+    panel_seed = eval_seed + panel * spec.evaluation_episodes
+
+    # Which stages are scored this round, and over which seeds.
+    plan: list[tuple[int, int, int]] = []
+    for index in range(stage + 1):
         if index != stage and index not in scored:
-            # Not scored this round. Zero episodes means "no evidence", which every
-            # retention check treats as neutral rather than as a failure.
-            results.append({"completion_rate": 0.0, "episodes": 0, "mean_accuracy": 0.0,
-                            "mean_wave": 0.0, "stage": stage_spec.name})
             continue
-        count = (spec.evaluation_episodes if index == stage else
-                 spec.retention_evaluation_episodes)
-        env = _stage_env(spec, index, layout, companion)
+        count = (spec.evaluation_episodes if index == stage
+                 else spec.retention_evaluation_episodes)
+        start_seed = panel_seed if index == stage else eval_seed
+        plan.append((index, start_seed, count))
+
+    jobs = [(index, seed) for index, start_seed, count in plan
+            for seed in range(start_seed, start_seed + count)]
+    raw_by_index: dict[int, list[dict]] = {index: [] for index, _, _ in plan}
+
+    # A recurrent policy carries hidden state, so its episodes are order-dependent; a
+    # companion policy is not picklable. Both stay on the serial path for correctness.
+    parallel = (not recurrent and companion is None
+                and len(jobs) > 1 and eval_worker_count(workers) > 1)
+
+    def evaluate_serially() -> None:
         state = None
         episode_start = np.ones((1,), dtype=bool)
 
@@ -190,23 +259,56 @@ def evaluate_ppo_stages(model, recurrent: bool, spec, layout: dict, stage: int,
             action, _ = model.predict(observation, deterministic=True)
             return int(np.asarray(action).item())
 
-        # evaluate_policy owns episode resets, so evaluate each seed separately to reset LSTM.
-        episodes = []
-        panel = rotation % max(1, spec.evaluation_panels)
-        panel_seed = eval_seed + panel * spec.evaluation_episodes
-        start_seed = panel_seed if index == stage else eval_seed
-        for seed in range(start_seed, start_seed + count):
+        envs: dict[int, AsteroidsRLEnv] = {}
+        for index, seed in jobs:
+            if index not in envs:
+                envs[index] = _stage_env(spec, index, layout, companion)
+            # evaluate_policy owns episode resets, so evaluate each seed separately to
+            # reset LSTM state between episodes.
             state = None
             episode_start[:] = True
-            episodes.append(evaluate_policy(env, policy, [seed]))
-        raw = [report["episodes"][0] for report in episodes]
-        # Reuse the canonical aggregator once more with recorded results avoided by evaluating
-        # as one batch for feed-forward; recurrent aggregation is calculated directly below.
-        numeric = ("survival_time", "wave", "reward", "asteroid_reward", "shots_fired",
-                   "asteroids_destroyed", "accuracy", "resolved_accuracy", "waves_cleared",
-                   "mean_wave_clear_time", "large_destroyed", "medium_destroyed",
-                   "small_destroyed")
-        import statistics
+            raw_by_index[index].append(
+                evaluate_policy(envs[index], policy, [seed])["episodes"][0])
+
+    if parallel:
+        try:
+            with tempfile.TemporaryDirectory() as scratch:
+                model_path = str(Path(scratch) / "eval_model.zip")
+                model.save(model_path)
+                count = min(eval_worker_count(workers), len(jobs))
+                # "spawn", not the Linux default "fork": this process already owns torch
+                # threads and the SubprocVecEnv workers, and forking a multithreaded process
+                # deadlocks. SubprocVecEnv is constructed with start_method="spawn" here for
+                # the same reason.
+                with ProcessPoolExecutor(max_workers=count,
+                                         mp_context=multiprocessing.get_context("spawn"),
+                                         initializer=_eval_worker_init,
+                                         initargs=(spec, layout, model_path)) as pool:
+                    for (index, _seed), episode in zip(
+                            jobs, pool.map(_eval_worker_episode, jobs)):
+                        raw_by_index[index].append(episode)
+        except (PermissionError, NotImplementedError):
+            # Sandboxes and a few Python builds expose multiprocessing but prohibit the
+            # named-semaphore sysconf used by ProcessPoolExecutor. Evaluation is a
+            # correctness path, so transparently retain the exact serial implementation.
+            raw_by_index = {index: [] for index, _, _ in plan}
+            evaluate_serially()
+    else:
+        evaluate_serially()
+
+    numeric = ("survival_time", "wave", "reward", "asteroid_reward", "shots_fired",
+               "asteroids_destroyed", "accuracy", "resolved_accuracy", "waves_cleared",
+               "mean_wave_clear_time", "large_destroyed", "medium_destroyed",
+               "small_destroyed")
+    results = []
+    for index, stage_spec in enumerate(spec.stages[:stage + 1]):
+        raw = raw_by_index.get(index)
+        if not raw:
+            # Not scored this round. Zero episodes means "no evidence", which every
+            # retention check treats as neutral rather than as a failure.
+            results.append({"completion_rate": 0.0, "episodes": 0, "mean_accuracy": 0.0,
+                            "mean_wave": 0.0, "stage": stage_spec.name})
+            continue
         clear_rate = sum(bool(x.get("completed_stage")) for x in raw) / len(raw)
         limit = stage_spec.max_seconds
         survival_fraction = sum(min(1.0, float(x["survival_time"]) / limit)
@@ -230,7 +332,8 @@ def evaluate_ppo_stages(model, recurrent: bool, spec, layout: dict, stage: int,
                               f"min_{name}": min(values), f"max_{name}": max(values)})
         results.append({"stage": index, "name": stage_spec.name,
                         "validation_panel": panel if index == stage else None,
-                        "seed_start": start_seed, **aggregate})
+                        "seed_start": panel_seed if index == stage else eval_seed,
+                        **aggregate})
     return results
 
 
@@ -394,6 +497,7 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                          settings: PPOTrainSettings | None = None,
                          learning_rate: float | None = None,
                          ent_coef: float | None = None,
+                         vf_coef: float | None = None,
                          entropy_floor: float | None = None,
                          stop_when_mastered: bool = False,
                          encoder: str = "mlp") -> Path:
@@ -434,7 +538,18 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
         spec, seed, stage=initial_stage,
         streak=int(saved_state.get("streak", 0)),
         mastered=bool(saved_state.get("mastered", False)),
-        promotion_history=saved_state.get("promotion_history"))
+        promotion_history=saved_state.get("promotion_history"),
+        promotion_samples=saved_state.get("promotion_samples"))
+    if spec.promotion_pool and "promotion_samples" not in saved_state and resume:
+        from .curriculum import promotion_samples_from_log
+        for source_log in (destination / "evaluation.jsonl",
+                           resume.parent / "evaluation.jsonl"):
+            manager.promotion_samples = promotion_samples_from_log(
+                source_log, manager.stage, spec.promotion_window,
+                through_episode=start_episode)
+            if manager.promotion_samples:
+                break
+        manager.streak = len(manager.promotion_samples)
     recovery_stage = saved_state.get("recovery_stage")
     recovery_stage = None if recovery_stage is None else int(recovery_stage)
 
@@ -586,6 +701,15 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
         model.ent_coef = float(ent_coef)
         print(f"entropy coefficient overridden to {ent_coef:g}", flush=True)
 
+    if vf_coef is not None:
+        # Read off the algorithm at every train() call, like `ent_coef`. Raising it buys the
+        # critic a larger share of the update: measured 2026-08-24, v7's value function had
+        # explained_variance 0.479 with excursions below zero, so GAE advantages were built
+        # on a critic that sometimes did worse than predicting the mean.
+        settings.vf_coef = float(vf_coef)
+        model.vf_coef = float(vf_coef)
+        print(f"value coefficient overridden to {vf_coef:g}", flush=True)
+
     if entropy_floor is not None:
         settings.entropy_floor = float(entropy_floor) if entropy_floor > 0 else None
     entropy_controller = entropy_floor_controller(
@@ -662,6 +786,7 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                 json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
             state = {"stage": manager.stage, "streak": manager.streak,
                      "promotion_history": manager.promotion_history,
+                     "promotion_samples": manager.promotion_samples,
                      "mastered": manager.mastered,
                      "recovery_stage": recovery_stage}
             state_text = json.dumps(state, indent=2) + "\n"
@@ -696,6 +821,7 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
                 "environment_steps": int(self.num_timesteps),
                 "training_stage": evaluated_stage, "next_training_stage": manager.stage,
                 "promotion_streak": manager.streak, "promoted": promoted,
+                "promotion_pool": manager.promotion_pool,
                 "promotion_completion_target": spec.promotion_completion,
                 "promotion_clear_rate_target": spec.promotion_clear_rate,
                 "stages": results,
@@ -716,7 +842,12 @@ def train_ppo_curriculum(curriculum_path: str | Path, output_dir: str | Path, *,
             print(f"  PPO eval @ {self.episode}: stage {evaluated_stage + 1} "
                   f"completion {current['completion_rate']:.1%}, "
                   f"clear {current['clear_rate']:.1%}, "
-                  f"accuracy {current['mean_accuracy']:.3f}, {rate:.0f} decisions/s" +
+                  f"accuracy {current['mean_accuracy']:.3f}" +
+                  ((f", pool {manager.promotion_pool['evaluations']}/"
+                    f"{manager.promotion_pool['required_evaluations']} "
+                    f"clear {manager.promotion_pool['clear_rate']:.1%}")
+                   if manager.promotion_pool else "") +
+                  f", {rate:.0f} decisions/s" +
                   (f" - PROMOTED to stage {manager.stage + 1}" if promoted else ""),
                   flush=True)
             print(f"  watch champion: ./run.sh preview {destination}", flush=True)

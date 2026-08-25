@@ -7,10 +7,11 @@ from pathlib import Path
 from ..actions import Action
 from ..config import GameConfig
 from ..state import WorldSnapshot
-from .environment import (ASTEROID_FEATURES, GLOBAL_FEATURES, MAX_PROJECTILES,
+from .environment import (ASTEROID_FEATURES, MAX_PROJECTILES,
                           MOBILE_ACTIONS, PROJECTILE_FEATURES, SHIP_FEATURES,
                           STATIONARY_ACTIONS, TEAMMATE_FEATURES,
-                          encode_observation, history_offsets, ship_feature_count)
+                          encode_observation, global_feature_count, history_offsets,
+                          ship_feature_count)
 from .muzero import MuZeroAgent
 
 
@@ -32,7 +33,8 @@ class MuZeroController:
         stored_dense = layout.get("history_frames")
         self.max_projectiles = int(layout.get("max_projectiles", 0))
         self.max_teammates = int(layout.get("max_teammates", 0))
-        self.global_features = int(layout.get("global_features", 0)) > 0
+        self.observation_version = int(layout.get("version", 4))
+        self.global_features = self.observation_version >= 5
         if layout.get("version", 1) >= 2:
             if int(layout.get("max_asteroids", -1)) != self.max_asteroids:
                 raise ValueError("checkpoint asteroid slot count does not match this game")
@@ -149,7 +151,8 @@ class PPOPlayController:
         # live showdown against any checkpoint carrying them raised AttributeError before it
         # could draw a frame. Every v5 checkpoint carries the global block.
         self.max_teammates = int(layout.get("max_teammates", 0))
-        self.global_features = int(layout.get("global_features", 0)) > 0
+        self.observation_version = int(layout.get("version", 4))
+        self.global_features = self.observation_version >= 5
         self.history_slots = history_offsets(
             self.history_frames, history_long_frames, history_long_stride)
         self._history_depth = (max(self.history_slots) + 1) if self.history_slots else 0
@@ -157,7 +160,7 @@ class PPOPlayController:
             ASTEROID_FEATURES + 2 * len(self.history_slots)) + (
                 self.max_projectiles * PROJECTILE_FEATURES) + (
                 self.max_teammates * TEAMMATE_FEATURES) + (
-                GLOBAL_FEATURES if self.global_features else 0)
+                global_feature_count(self.observation_version))
         if expected != int(metadata.get("observation_size", -1)):
             raise ValueError("checkpoint observation manifest does not match its parameters")
         if int(metadata.get("num_actions", -1)) != len(self.actions):
@@ -181,7 +184,8 @@ class PPOPlayController:
                 snapshot, ship_id, self.config, self.max_decisions, self.max_asteroids,
                 self.frame_skip, self._history, self.history_frames, self.history_slots,
                 self.max_projectiles, self.max_teammates, False,
-                global_features=self.global_features)
+                global_features=self.global_features,
+                observation_version=self.observation_version)
             self._record_history(snapshot)
             self._action = self.actions[self.policy(observation)]
             self._next_decision_step = snapshot.step + self.frame_skip
