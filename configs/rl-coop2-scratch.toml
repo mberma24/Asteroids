@@ -1,0 +1,285 @@
+# Co-operative survival, trained from scratch. Identical to `rl-survival-v2.toml` in every
+# respect except the ship count, so co-operative round N is solo round N's exact asteroid
+# field and the only variable is that there is more than one ship.
+#
+# Standalone on purpose. The `rl-survival-v2-coop.toml` tier *extends* the solo ladder, which
+# is right for a policy forked from a solo champion -- its prior rounds are rounds it
+# mastered. A run starting from scratch has mastered none of them, and `retention_holds`
+# enforces a per-stage completion floor, so inheriting them would fail retention on the first
+# evaluation and block promotion forever. Here round 1 is stage 0 and retention only ever
+# covers co-operative rounds this policy actually cleared.
+#
+# Every ship flies the SAME weights. Raise `ships` for 3+ and the observation grows by one
+# teammate slot per other ship; `ships > 1` also forces `friendly_collisions = "full"`, so
+# colliding with a teammate kills both and shooting one kills it.
+[curriculum]
+base_config = "rl-arcade.toml"
+retention_sample = 3
+promotion_completion = 0.90
+# 0.75, not 0.80. Lowered 2026-08-26 on evidence, not impatience. The planning oracle
+# clears round 26 at 0.969 but does it by deepcopying the simulator, so cloning it produces a
+# policy that clears 0.078 -- its skill is not a function of the observation, and it never
+# established that 0.80 is reachable by a policy that only sees the observation. At the run's
+# true rate of ~0.73, pooled promotion at 0.80 needs ~183 evaluations (91,500 episodes);
+# at 0.75 it needs 4. The old unpooled gate promoted at that same ~0.73 by catching a lucky
+# 64-episode draw, so 0.75 pooled is the same standard reached deliberately instead of by
+# noise.
+promotion_clear_rate = 0.75
+retention_completion = 0.75
+retention_floor = 0.50
+promotion_accuracy = 0.05
+promotion_streak = 2
+promotion_window = 4
+# Four disjoint 64-seed panels make one 256-episode promotion decision.
+promotion_pool = true
+current_stage_probability = 0.80
+evaluation_episodes = 64
+# 8, not the 16 default. Retention is a pooled statistic and does not need per-round
+# precision. Measured 2026-08-24: one evaluation costs 80.1s against 64.2s for 250 training
+# episodes, because evaluation loops seeds on a single env while training runs 8 in
+# parallel -- so evaluation was 55% of wall-clock time. Of its 144 episodes, 80 were
+# retention, and across 422 evaluations retention failed 0 times and blocked 0 promotions.
+# retention_sample cut 10 -> 3 on that evidence: 144 episodes per evaluation -> 88.
+retention_evaluation_episodes = 8
+evaluation_panels = 4
+test_evaluation_episodes = 128
+observation_version = 7
+
+[reward]
+survival_bonus = 0.10
+round_clear = 10.0
+death_penalty = 5.0
+# One rock, one reward, whatever its size. Each tier used to pay the same *total* (0.60),
+# which is split-neutral; flat-per-rock instead weights the reward toward finishing, because
+# a large yields 1 + 2 + 4 bodies -- breaking it pays 0.25 and clearing its four fragments
+# pays 1.00. Measured: no evidence splitting harms survival (the alarming raw correlation was
+# reverse causation -- dying early keeps you in the large-rich opening phase), so this is not
+# a penalty on splitting, just a simpler rule that happens to reward completion.
+large = 0.25
+medium = 0.25
+small = 0.25
+miss_penalty = 0.08
+accuracy = 0.0
+wave_clear = 0.0
+fast_clear = 0.0
+active_time_penalty = 0.0
+timeout_penalty = 0.0
+time_scaled_survival = true
+safety_progress = 0.02
+# Co-operative penalties. Before these, a teammate collision and a teammate's shot were the
+# only deaths that cost nothing -- the simulator reports them as `ship_collision` and
+# `friendly_fire`, not `ship_destroyed`, and only the latter was handled. Measured on
+# coop2-scratch: death_penalty averaged 0.10 while 56% of episodes ended in a death.
+# Losing the partner costs regardless of what killed it, so the agent has a reason to protect
+# it rather than merely to avoid killing it. A teammate taken by an asteroid was free before
+# this, and the only consequence was the forfeited round_clear. 10.0 matches round_clear, so
+# a preventable partner death costs about as much as failing the round.
+teammate_death_penalty = 10.0
+collision_penalty = 5.0
+friendly_fire_penalty = 5.0
+# 30.0, derived rather than guessed. Killing the partner buys a near-certain clear; keeping
+# it risks an accident worth about 45 points of forfeited survival. Co-operating wins only
+# while `friendly_fire_dealt_penalty > 45 * p(accident)`. At 12.0 that broke down above a 25%
+# accident rate and this run dies in 56% of episodes, so the reward still favoured shooting
+# the partner. 30.0 holds co-operation ahead up to a 67% accident rate.
+friendly_fire_dealt_penalty = 30.0
+
+# Straight line is one trajectory among equals: every phase sets
+# linear_probability = 1/(len(patterns) + 1), so a rock is exactly as likely to fly
+# straight as to fly any single curve. A field of nothing but curves teaches the policy
+# to always expect a turn; over-weighting straight teaches the opposite.
+
+# --- Warm-up rounds -------------------------------------------------------------------
+#
+# Explicit `[[stages]]` entries are prepended before the generated progression, so these are
+# rounds 1-3 and the 96-round ladder follows. Co-op round 1 was solo round 1's full field
+# *plus* the entire co-operation problem at once; everything else in this curriculum
+# introduces one axis at a time, and this restores that.
+#
+# The axis these rounds soften is HOW MANY ROCKS, never WHETHER SHOOTING IS NEEDED. The first
+# version of this ladder opened with an empty arena to isolate co-operation from aiming, and
+# that was a mistake with a measured cost. An arena with nothing in it has one optimal policy
+# -- never fire -- and coop2-v3 learned it perfectly, reaching 0.3 shots per episode and a
+# 100% clear over 7,000 episodes. Promoted onto two rocks it could no longer shoot anything:
+# accuracy 0.05, 61.7% of episodes destroying nothing at all, and the partner then killed by
+# an asteroid in ~30% of episodes because neither ship would clear the field. It sat there
+# 6,500 episodes without recovering. A rung whose optimum must be unlearned by the next rung
+# is not a gentle first step, it is a trap; every rung here needs both aiming and spacing.
+#
+# `no_hit_seconds = 0` is not optional on the sparse rounds: it defaults to 6.0, which ends an
+# episode after six seconds without a kill. Two rocks over thirty seconds cannot keep that
+# clock fed, so every episode would end early as a stall.
+
+[[stages]]
+# Two rocks and a slow trickle. Roughly a quarter of round 1's field, so there is always
+# something to shoot and plenty of room to miss while learning not to hit the teammate.
+name = "coop2-warmup-1"
+survival = true
+ships = 2
+movement_enabled = true
+composition = ["small"]
+asteroid_size = "small"
+min_speed = 26.0
+max_speed = 38.0
+initial_asteroids = 2
+spawn_interval = 6.0
+spawn_spread = 170.0
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds = 30.0
+no_hit_seconds = 0.0
+promotion_clear_rate = 0.85
+promotion_accuracy = 0.03
+miss_penalty = 0.08
+
+[[stages]]
+# Half of round 1's field, at half its spawn rate.
+name = "coop2-warmup-2"
+survival = true
+ships = 2
+movement_enabled = true
+composition = ["small"]
+asteroid_size = "small"
+min_speed = 26.0
+max_speed = 38.0
+initial_asteroids = 4
+spawn_interval = 3.5
+spawn_spread = 170.0
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds = 30.0
+no_hit_seconds = 0.0
+promotion_clear_rate = 0.80
+promotion_accuracy = 0.05
+miss_penalty = 0.08
+
+[[stages]]
+# Three quarters of round 1's field. The last rung before the ladder proper.
+name = "coop2-warmup-3"
+survival = true
+ships = 2
+movement_enabled = true
+composition = ["small"]
+asteroid_size = "small"
+min_speed = 26.0
+max_speed = 38.0
+initial_asteroids = 6
+spawn_interval = 2.75
+spawn_spread = 170.0
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds = 30.0
+promotion_clear_rate = 0.80
+promotion_accuracy = 0.05
+miss_penalty = 0.08
+
+[progression]
+rounds = 96
+name_prefix = "coop2-round"
+# Every ship flies the same weights. Raise for 3+ ship ladders.
+ships = 2
+survival = true
+patterns = []
+linear_probability = 1.0
+movement_enabled = true
+ship_invulnerable = false
+
+# Every physical knob moves a small amount on every round. Pattern phases below change the
+# distribution, but never turn these ramps backward.
+min_speed_start = 26.0
+min_speed_step = 1.05263
+max_speed_start = 38.0
+max_speed_step = 1.66316
+amplitude_min_start = 0.0
+amplitude_min_step = 0.12632
+amplitude_max_start = 0.0
+amplitude_max_step = 1.68421
+wavelength_min_start = 4.8
+wavelength_min_step = -0.03579
+wavelength_max_start = 6.0
+wavelength_max_step = -0.03789
+spawn_interval_start = 2.0
+spawn_interval_step = -0.01316
+spawn_spread_start = 170.0
+spawn_spread_step = -1.53684
+initial_asteroids_start = 8.0
+initial_asteroids_step = 0.12632
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+
+[[progression.phases]]
+until = 2
+patterns = []
+linear_probability = 1
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 6
+patterns = ["sine"]
+linear_probability = 0.5
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 10
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 12
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "small", "medium"]
+
+[[progression.phases]]
+until = 14
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "medium", "medium"]
+
+[[progression.phases]]
+until = 16
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "medium", "medium", "medium"]
+
+[[progression.phases]]
+until = 22
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change"]
+linear_probability = 0.142857
+asteroid_size = "medium"
+
+[[progression.phases]]
+until = 25
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "large"]
+
+[[progression.phases]]
+until = 28
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large", "large"]
+
+[[progression.phases]]
+until = 52
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "large"
+
+[[progression.phases]]
+until = 82
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["large", "large", "large", "medium"]
+
+[[progression.phases]]
+until = 96
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "mixed"
