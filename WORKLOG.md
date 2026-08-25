@@ -4,7 +4,973 @@ Running record of what has been changed and what was learned, so work can resume
 sessions without re-deriving it. Newest context at the top; the detail is chronological
 below.
 
-Last updated: 2026-08-21.
+Last updated: 2026-08-26.
+
+---
+
+## 2026-08-25 (co-op): an empty first round taught the policy never to fire
+
+`models/coop2-v3` cleared warm-up 1 -- an arena with no asteroids in it, built to isolate
+co-operation from aiming -- and it cleared it beautifully. Teammate deaths fell 69% -> 2%,
+shots fell 48 -> 0.3 per episode, mean separation rose 313 -> 415px, and it promoted at
+episode 7,000.
+
+Then it could not shoot. On warm-up 2 (two rocks and a slow trickle) it never recovered:
+
+```
+warm-up 2               shots  destroyed  accuracy  mate deaths   ff   collisions
+  7008- 8889             10.0      0.64     0.041      47.9%     7.9%    0.5%
+  8890-10767             17.0      1.16     0.062      41.8%    10.1%    2.1%
+ 10768-12643             12.1      0.98     0.063      44.1%     6.7%    6.7%
+
+61.7% of episodes destroyed NOTHING;  pooled clear 14.5% against a 75% bar,
+flat for 6,500 episodes
+```
+
+Note where the teammate deaths come from. 44% of episodes lose the partner, but friendly
+fire is 6.7% and collisions 6.7% -- so in roughly **30% of episodes an asteroid killed the
+partner**, because neither ship would clear the field. The co-operation lesson held; the
+ability to shoot was gone.
+
+**The mistake was mine, and it is a design rule, not a tuning miss.** An arena with nothing
+in it has exactly one optimal policy: never fire. That is not a gentle first rung, it is a
+rung whose optimum the next rung requires you to unlearn. I flagged the risk before the
+promotion ("there is a real risk warm-up 1 has taught a habit that must be unlearned, which
+would look like a regression right after promotion") and launched anyway.
+
+### The rule
+
+**Soften how many rocks. Never soften whether shooting is needed.** Every rung of a warm-up
+ladder must exercise every skill the ladder is building, at lower intensity -- if a rung can
+be cleared by switching a behaviour off, the policy will switch it off.
+
+`tests/test_survival_v2_multiagent.py::test_warmup_rounds_ramp_difficulty_without_ever_removing_the_need_to_shoot`
+now pins this: every warm-up stage must have `initial_asteroids > 0` and a real spawn
+interval.
+
+### v4
+
+Warm-up ladder is 2 -> 4 -> 6 rocks before round 1's 8, gates 0.85 / 0.80 / 0.80. Everything
+else from v3 carries over unchanged: team-survival clearing, the collision and friendly-fire
+penalties, `friendly_fire_dealt_penalty = 30.0`, the teammate-aware safety potential, and
+teammate projectiles that cannot be crowded out of the observation.
+
+`cloud/asteroids-coop2-v4.conf`, running as `models/coop2-v4` from scratch. Watch for
+accuracy climbing off 0.05 while `teammate_deaths` stays down -- v3 got one of those two and
+the whole point of this ladder is to get both at once. `ent_coef` stays at the 0.01 default
+while the run is incompetent and drops toward 0.0025 once it clears a rung.
+
+`models/coop2-scratch`, `models/coop2-v2` and `models/coop2-v3` are kept as
+before-comparisons.
+
+---
+
+## 2026-08-25 (night): promotion now uses the whole 256-episode panel cycle
+
+Survival-v2 no longer promotes on two individually passing 64-episode evaluations among
+the last four. That rule made promotion depend on which small panel happened to draw well.
+With `promotion_pool = true`, the manager waits for all four disjoint panels, weights
+completion, clear rate, and accuracy by episode count, and applies the gates once to the
+256-episode pool. The window then rolls one panel at a time.
+
+The samples are stored in `curriculum_state.json`, including checkpoint copies, so a normal
+restart does not throw away partial evidence. On the first resume of an older run, the last
+four current-stage evaluations are reconstructed from `evaluation.jsonl`, bounded by the
+checkpoint episode so stale later records cannot leak in. Evaluation logs, console output,
+`status`, and `follow` report the pool size and pooled clear rate. Other curricula keep their
+old pass-count rule unless they explicitly opt in.
+
+This changes what patience means: waiting can now improve a genuinely improving policy, but
+it cannot promote a ~0.69 policy through an 0.80 gate by chance. The next decision point for
+v9 remains whether critic quality improves by roughly 10,000 episodes; promotion luck is no
+longer the experiment.
+
+---
+
+## 2026-08-26 (night): recurrent PPO is not viable on this hardware
+
+Launched `models/lstm-v1` -- recurrent PPO on survival-v2 -- as the architecture arm the
+cloning result pointed at. Killed it 1.5 hours later at 135 episodes.
+
+```
+lstm-v1        8 decisions/s     (feed-forward on the same box: 630)
+               135 episodes, still on round 1, 21.9s average survival
+```
+
+**79x slower than the feed-forward line.** Some of that was `nice 10` starvation against the
+oracle recording, but even a generous 10x recovery leaves it 8x slower than FF -- and
+`MlpLstmPolicy` cannot inherit the feed-forward champion's weights, so it must climb from
+round 1, which took the FF line roughly 100,000 episodes. That is weeks to months on 4 ARM
+cores. Recurrent PPO processes sequences without batching across time and this box does not
+have the throughput.
+
+**Do not re-propose the recurrent arm for this hardware.** The reasoning behind it stands --
+memory is one of the two answers if the observation cannot determine oracle-quality actions
+-- but it needs hardware this project does not have. Check throughput before recommending an
+architecture, not after.
+
+**Which leaves exactly one arm with a mechanism behind it**, and it is blocked on data:
+behavioural cloning from the oracle to *initialise* a feed-forward policy at oracle quality,
+then RL-finetune. If the 240-episode dataset does not generalise either, the remaining option
+is search at inference rather than any training run at all.
+
+Recording status: 40/240 episodes, 17,443 pairs, checkpointing every 20 episodes to
+`metrics/oracle-trace-60000.npz`.
+
+---
+
+## 2026-08-26 (later): the oracle's skill is not a function of what the policy can see
+
+**Recorded 24 oracle episodes** (10,416 observation/action pairs, oracle clear 0.958 on
+those seeds) and asked two questions of them.
+
+**1. How much does the trained policy already agree with the oracle?**
+
+```
+top-1 agreement   15.0%      (random 6.2%)
+  fire bit        53.2%
+  thrust bit      82.8%      (base-rate inflated: both thrust <12% of the time)
+  rotation        48.0%
+```
+
+The behavioural difference is concrete: **the policy fires on 75.2% of decisions, the
+oracle on 55.5%.** The oracle spends 33.6% of its decisions rotating *without* firing --
+aiming, then shooting -- where the policy does that only 14.5% of the time and fires while
+it turns. The oracle destroys 91.6 asteroids per episode against the policy's ~67.
+
+**2. Can the architecture represent oracle play at all?** Behavioural cloning, same network
+shape PPO uses (1265 -> 256 -> 256 -> 16), episode-level tail split:
+
+```
+train  99.2%     the network memorises the oracle's actions completely
+val    19.1%     and generalises essentially not at all
+
+majority-class baseline  17.9%
+trained PPO policy       15.0%
+random                    6.2%
+```
+
+**A supervised learner with perfect labels, no exploration problem and no credit-assignment
+problem lands one point above always guessing the most common action.** That is the
+strongest evidence yet that the ceiling is not PPO: the information the oracle acts on --
+the outcome of its two-second rollouts -- is not a function of the observation.
+
+**Caveat, and the reason this is provisional.** 8,332 training samples for a 1265-dimensional
+input is very little, and near-perfect train accuracy with chance-level validation is
+exactly what a data shortage looks like. The strict claim is "not learnable from 10k
+samples", not "the information is absent". A 240-episode recording (~100k pairs) is running
+on the VM to settle it.
+
+**A contamination bug caught before it did damage.** The first recording used seeds
+10000-10023 -- **the held-out evaluation panel**. Training anything on it would have
+corrupted every number this project uses to judge a run. The file is kept as
+`metrics/oracle-trace-EVALSEEDS-do-not-train.npz` and the real dataset is being recorded
+from seed 60000. Any future dataset generation must avoid 10000-10255.
+
+**If the bigger dataset also fails to generalise**, the conclusion is that no reactive policy
+on this observation can reach oracle quality, and the options narrow to: give the policy
+memory (`LSTM-PPO`, screened for only 1,000 episodes and never properly tested), or give it
+search at inference. If it *does* generalise, behavioural cloning becomes a way to
+initialise the policy at oracle quality and RL-finetune from there -- which would be the
+step change that four hyperparameter arms failed to produce.
+
+---
+
+## 2026-08-26 (co-op rewards): losing a partner now costs, and every rock pays the same
+
+**A teammate killed by an asteroid was free.** The only consequence was the forfeited
+`round_clear`, so the agent had a reason not to *shoot* its partner but none to *protect* it.
+Added `teammate_death_penalty = 10.0`, charged whenever a teammate dies whatever killed it,
+stacking with `friendly_fire_dealt_penalty`. Losing a partner is bad; killing one is worse:
+
+```
+warm-up 1, best to worst
+  both survive the round              +55.00
+  partner lost, I survive             +35.00     cost of not protecting: 20
+  I shoot the partner, I survive       +4.68     cost of shooting it:    50
+  we collide at 1s                    -13.50
+```
+
+Strictly ordered, and co-operating beats shooting the partner up to an 80% accident rate.
+
+**Does splitting large rocks deserve a penalty? Measured: no.** The raw correlation is
+alarming -- the top quartile of large-rock destruction clears **31.6%** against **92.8%** for
+the bottom quartile -- but it is reverse causation. A round *starts* with its rocks at full
+size, so an episode that dies early spends all its time in the large-rich opening and scores
+a high large-kill rate for that reason alone. Controlling for it (only episodes that survived
+the first 10s, counting only larges broken inside that window, v7 champion on round 26):
+
+| larges broken in first 10s | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---:|---:|---:|---:|---:|---:|
+| cleared afterwards | 83% | 88% | 74% | 91% | 64% | 83% |
+
+No trend. n=114, so not a powerful test, but it gives no reason to penalise splitting.
+Collision *area* also falls as a rock breaks down (1521 -> 1152 -> 676) even though the count
+rises 1 -> 2 -> 4.
+
+**Rock rewards are now flat: 0.25 each, whatever the size** (co-operative ladders only). The
+old 0.60/0.30/0.15 made each *tier* pay the same total, which is split-neutral. Flat-per-rock
+weights the reward toward finishing instead, for free: breaking a large pays 0.25 while
+clearing its four fragments pays 1.00. Episode totals move about -9% at round 26, so the
+balance against survival is unchanged.
+
+**Solo curricula keep 0.60/0.30/0.15 deliberately.** Changing them would fail
+`reward_matches` for every existing solo checkpoint and strand the v7 champion line.
+
+---
+
+## 2026-08-26 (co-op, later): clearing a co-operative round rewarded killing your partner
+
+Watching a preview showed the two ships killing each other immediately even after the
+friendly-fire penalty went in. Three measurements, two of which killed my own hypotheses.
+
+**1. It is not aiming at its teammate.** On `coop2-v2/checkpoint_013500`, the agent fires a
+median of **85 degrees away** from its partner and **never within 20 degrees** -- yet kills it
+in **30 of 30** episodes of the empty warm-up round.
+
+**2. The bullet wraps the arena.** A shot travels 540px/s x 1.45s = **783px in a 900px arena
+that wraps**, so it sweeps 87% of the world and comes back round. Fatal bullets had travelled
+a median of **612px, 100% of them over 450px**. There is no safe direction to fire.
+
+**3. But shortening the range does not fix it.** Cutting the lifetime to 0.75s (405px) and
+re-running the *same* policy left kills at 30/30, with fatal travel merely dropping to 297px
+-- a partner ~200px away is well inside even the shortened range. **The projectile change was
+reverted.** An earlier 108px measurement that had pointed away from the wrap theory came from
+the *champion* (episode 7,000), a different policy; comparing across checkpoints was my error.
+
+**The actual bug is the objective.** `completed_stage` was `survived_to_limit` -- the
+**learner's own** survival. On a co-operative round, shooting your partner and cruising to the
+limit therefore *counts as clearing it*:
+
+```
+coop2-v2 checkpoint_013500, warm-up 1 (empty arena)
+   agent cleared the round      30/30
+   agent killed its partner     30/30
+```
+
+That 0.92 clear rate is what promoted the run to warm-up 2 at episode 6,500. **No penalty can
+outweigh an objective that rewards the behaviour** -- the -30 was being paid out of a +55 the
+same act earned.
+
+**Fixed:** a round with companions is cleared by `team_survived_to_limit` -- every ship alive
+at the limit -- for both `completed_stage` and the `round_clear` reward. Solo rounds are
+untouched (guarded on `companion_ids`). Re-scoring the identical policy under the corrected
+rule: **0 of 30** on both warm-up rounds. Every number `coop2-v2` produced after episode 6,500
+measured the wrong thing.
+
+**Also fixed, from the same investigation:**
+
+- `_safety_potential` saw only asteroids, so nothing rewarded separation. Collisions need 28px
+  of closing but kills land far outside that, so a policy that learns "do not touch" still
+  sits inside shooting range -- collisions fell to 1.8% of episodes while friendly fire stayed
+  at 63%. Teammates are now in the potential, giving `safety_progress` a dense gradient.
+- `mean_teammate_distance` and `minimum_teammate_distance` are recorded. Separation decides
+  the round and nothing measured it.
+- `miss_penalty` 0.02 -> 0.08 on the co-operative ladder: the policy fired 11 times per
+  episode into an arena containing nothing to shoot, for a total cost of 0.22.
+
+**Running: `models/coop2-v3`**, fresh. `coop2-scratch` and `coop2-v2` kept as
+before-comparisons. 239 tests pass.
+
+**The lesson worth keeping:** a clear rate that measures one agent cannot score a co-operative
+round, and every metric downstream of it inherits the error. Check what "success" is defined
+as before tuning anything that optimises for it.
+
+---
+
+## 2026-08-26 (co-op): the policy was shooting its own teammate, and it paid to
+
+`models/coop2-scratch` (two ships, shared weights, from scratch) ran **100,000 episodes stuck
+at ~42% pooled clear on co-op round 1** -- solo round 1's exact field, which the solo champion
+clears at 0.92 -- with accuracy 0.10 against 0.72 solo. Not a tuning problem.
+
+**The simulator reports three deaths as three different events:**
+
+| death mode | event | `simulation.py` |
+|---|---|---|
+| asteroid hit | `ship_destroyed` | :414 |
+| ship collision | `ship_collision` | :430 |
+| friendly fire | `friendly_fire` | :440 |
+
+`environment.py` handled only `ship_destroyed`, so **the two failure modes a co-operative
+round exists to teach carried no penalty at all**. Evidence: over 2,000 episodes
+`death_penalty` averaged **+0.10** while **56%** ended in a death.
+
+**And killing the partner was the reward-maximising move.** The shooter paid nothing, and a
+ship left alone faces an emptier arena, so the episode continues *in its favour*. Measured on
+a 300-episode smoke run of the new warm-up round -- **an arena containing no asteroids at
+all** -- the untrained policy killed its teammate in **253 of 300 episodes (84%)**, with 15
+collisions and 24 deaths to the partner's fire. That was invisible: nothing in
+`training.jsonl` recorded either event.
+
+**Fixes:**
+
+- `RewardConfig` gains `collision_penalty`, `friendly_fire_penalty` and
+  `friendly_fire_dealt_penalty`, all defaulting to 0.0 so every solo curriculum, checkpoint
+  and task hash is untouched (`reward_matches` already treats a new term as inert at default).
+  Handled in `environment.py` mirroring `multiagent.py:201-208`, which had solved this.
+- **`friendly_fire_dealt_penalty = 30.0`, derived not guessed.** Killing the partner buys a
+  near-certain clear; keeping it risks an accident worth ~45 points of forfeited survival, so
+  co-operating wins only while the penalty exceeds `45 * p(accident)`. At the first-guess 12.0
+  that broke down above a **25%** accident rate and this run dies in 56% of episodes -- the
+  reward still favoured shooting the partner. The monotonicity check caught it before launch,
+  which is exactly the rule two earlier runs were lost to skipping.
+- `ship_collisions`, `friendly_fire_taken` and `friendly_fire_dealt` are now recorded per
+  episode. The dominant failure mode had been undiagnosable.
+- **Projectile slots no longer hide incoming fire.** They were filled purely by distance, and
+  a 1.45s lifetime against a 0.24s cooldown leaves ~6 of the agent's own shots alive, all
+  starting at distance zero -- crowding the teammate's shots out of an 8-slot list. Now
+  ordered non-owned first, nearest within each group. Content changes, layout does not, so
+  existing checkpoints still load.
+- **Three warm-up rounds** (`coop2-warmup-1..3`) prepended via `[[stages]]`, which
+  `curriculum.py:459` already supported. Warm-up 1 has **no asteroids**: the only ways to fail
+  are hitting or shooting the teammate. `no_hit_seconds = 0` is mandatory there -- it defaults
+  to 6.0 and would end every episode of an asteroid-free round as a stall.
+
+**Running: `models/coop2-v2`**, from scratch on the fixed ladder. `coop2-scratch` is kept as
+the before-comparison. The signal to watch is `friendly_fire_dealt` falling from 228/250
+toward zero and warm-up 1's clear rate approaching 0.90. **If two ships cannot clear an empty
+arena, the problem is co-operation itself and not difficulty** -- which is what that round is
+for.
+
+**Phase 2**, once that clears: port to MAPPO (`multiagent.py`), where every ship contributes
+experience to the shared policy instead of only ship1 while a stale stochastic snapshot flies
+the other.
+
+---
+
+## 2026-08-26: three hyperparameter arms have failed; the bottleneck is not optimization
+
+**v10 (`gamma` 0.997 -> 0.99) failed both checks**, exactly as v9 did. Stopped at 21,500
+episodes / 43 evaluations.
+
+```
+slope               +0.0008/1k (se 0.0018)  ->  +0.4 sigma, flat
+pooled clear        0.672 0.734 0.723 0.734 0.730 0.734 0.664 0.770 0.695   (overall 0.717)
+explained_variance  0.374   vs v7 control 0.479   -- target was "above 0.479"
+```
+
+It never regained the 0.781 it forked from, and the mechanism moved the wrong way again.
+
+**The scoreboard of interventions is now unambiguous:**
+
+| arm | change | result |
+|---|---|---|
+| v8 | entropy floor 0.8 nats | **-5.2 sigma** |
+| v9 | `vf_coef` 0.5 -> 1.0 | -1.9 sigma, explained_variance 0.479 -> 0.386 |
+| v10 | `gamma` 0.997 -> 0.99 | flat, explained_variance 0.479 -> 0.374 |
+
+Plus, earlier: three observation versions, two learning rates, two entropy settings, a
+bridge curriculum, and 112,500 episodes of plain v7 baseline. The policy sits at **~0.72 on
+the selection seeds, ~0.69 held out**, and nothing moves it. **If the bottleneck were
+optimization, one of entropy, learning rate, value weight or discount would have twitched.
+None did.**
+
+**A hypothesis tested and rejected before it cost anything.** The v7 threat features use
+`collision_prediction`, which extrapolates *linearly* over a 5-second horizon, while every
+asteroid from round 23 on follows one of eleven curved patterns. Measured on round 26:
+
+| horizon | median error | p90 | (asteroid radii 13 / 24 / 39 px) |
+|---:|---:|---:|---|
+| 0.25s | 0.4 px | 2.6 px | |
+| 0.50s | 1.8 px | 10.6 px | |
+| 1.00s | 7.4 px | 38.4 px | |
+| 2.00s | 28.1 px | 99.8 px | |
+
+Worst pattern at 0.5s is `figure_eight` at 8.1px. **Linear extrapolation is accurate at the
+horizons that matter for dodging**, so the threat features are fine and an observation v8
+built on pattern-aware prediction would have been wasted work. This also corrects the
+worklog's older "33px at 0.5s" figure, which came from `rl.toml`'s much larger amplitudes,
+not this curriculum.
+
+**A flaw in the planning oracle, found by sweeping its horizon.** At H=2 decisions (0.13s)
+it scores **0.031**, far below the unperturbed pilot's 0.484. The claim that "candidate 0 is
+the pilot, so the oracle can never score below the pilot" only holds if the scoring function
+measures long-run value. At a short horizon nearly every candidate survives the window, the
+score collapses to hits-and-clearance, and it picks myopic perturbations over the pilot's
+actions. The H=30 result (0.969) stands; short-horizon numbers from this script do not.
+
+**What the evidence now points at.** The measured ladder on round 26:
+
+```
+greedy  (no lookahead, no dodge)      0.266
+pilot   (no lookahead, dodges)        0.484
+PPO     (reactive, 4.7s of history)   ~0.72
+oracle  (2.0s of verified lookahead)  0.969
+```
+
+The oracle's policy *is* the pilot. All it adds is the ability to try an action and see the
+result two seconds out, and that alone is worth 0.48 -> 0.97. The remaining gap looks like
+lookahead, which a feed-forward reactive policy structurally cannot do.
+
+**Running now: the representability test.** `scripts/planning_oracle.py` gained `--record`,
+which writes (observation, oracle action) pairs. 24 episodes are being recorded on the VM.
+The question it answers is the one nothing else has addressed: **can this architecture and
+observation represent oracle-quality play at all?**
+
+- If the trained policy already agrees with the oracle on most states, the representation is
+  fine and the problem is RL credit assignment.
+- If agreement is poor and behavioural cloning also plateaus near 0.72, the architecture or
+  the observation is the ceiling, and the answer is recurrence (`LSTM-PPO` exists and was
+  screened for only 1,000 episodes) or search at inference.
+
+Either way it ends the hyperparameter era, which has now produced three controlled nulls.
+
+---
+
+## 2026-08-25 (late): v9 failed, pooling was never deployed, v10 tests the discount
+
+**v9 (`vf_coef` 0.5 -> 1.0) failed on its own terms.** Stopped at 9,000 episodes, 18 evals:
+
+```
+explained_variance   v9 0.386 (last 100 updates 0.400)   vs v7 control 0.479
+                     the target was "above 0.479" -- it went down and stayed down
+pooled clear         v9 0.725 (n=1088)  vs champion 0.781 (n=256), both on selection seeds
+                     difference -0.056 +- 0.029  =  -1.9 sigma
+```
+
+The critic hypothesis is **untested, not disproven**: raising the loss weight simply did not
+raise explained variance, so we learned about the knob rather than the theory.
+
+**Selection bias is large and was invisible.** The v7 champion scored 0.781 on the 256
+selection seeds and **0.688 on the untouched 128-seed test panel** -- 9.3 points. Worse,
+0.688 is essentially identical to v7's running mean across all checkpoints, 0.695: the
+best-of-149 checkpoint is no better on fresh levels than the average one. **Champion
+selection was selecting noise.** The arithmetic agrees -- at a true 0.69 with n=64
+(sd 0.058), the expected maximum of 149 draws is about 0.85, and the observed max was 0.812.
+
+**Quantization.** At n=64 no attainable clear rate equals 0.80: 51/64 = 0.7969 and
+52/64 = 0.8125. The effective bar was **0.8125**, a hidden 1.25-point tax. v9's episode-2000
+evaluation read 51/64 and missed by one episode.
+
+**Pooled promotion already existed and had never been deployed.** `promotion_pool` is
+implemented in `curriculum.py`/`training.py` and `configs/rl-survival-v2.toml` sets it true,
+but the VM had neither the attribute nor the config line -- so **v7 and v9 both ran the old
+2-of-4 gate**. Caught only because the `streak` values in the logs (1,1,1,1,0,0,0) did not
+match what pooling produces (1,2,3,4,4,4). Now deployed and verified: 256-episode decision,
+150 tests pass on the VM. A 0.812 draw can no longer promote a 0.688 policy.
+
+**The round-26 "wall" is not a wall.** The champion across the neighbourhood:
+
+| round | size mix | clear | | round | size mix | clear |
+|---:|---|---:|---|---:|---|---:|
+| 23 | [2,2,2,3] | 0.922 | | 27 | [2,2,3,3] | 0.688 |
+| 24 | [2,2,2,3] | 0.922 | | 28 | [2,2,3,3] | 0.719 |
+| 25 | [2,2,2,3] | 0.844 | | 29 | [3] | **0.438** |
+| 26 | [2,2,3,3] | 0.797 | | | | |
+
+Round 26 is simply the first rung where a smoothly declining ability curve crosses the fixed
+0.80 bar -- it shares its size mix with 27 and 28. **The real cliff is round 29**, all-large,
+a 28-point drop against 5 points for the 26 transition. This also explains why the round-26
+bridge failed on 2026-08-23: it was built to walk a cliff that is not there. And promoting
+past 26 lands on 27 at 0.688, immediately stuck again -- the problem is a capability ceiling
+around rounds 25-26, not one rung.
+
+**v10 launched: `gamma` 0.997 -> 0.99**, forked from v7's champion, `vf_coef` back to 0.5,
+one variable. Rationale: gamma 0.997 is an effective horizon of 333 decisions -- 22.2s of a
+30-second round -- so the critic must essentially predict how much longer the ship survives.
+gamma 0.99 is 100 decisions, 6.7s. **The oracle clears the round at 0.969 using 2.0s of
+lookahead**, so a 22-second value estimate buys variance rather than foresight. Falsification:
+if explained_variance does not rise well above 0.479, the critic is not fixable this way and
+the next lead is observation work (v7 features, +0.040, the only thing that has ever moved
+this number alone).
+
+---
+
+## 2026-08-25 (night): RESOLVED -- the gate is fair and the agent has 26 points of headroom
+
+**The planning oracle clears round 26 at 0.969.** 31 of 32 seeds, completion 0.973, mean
+survival 29.2s, 91.6 asteroids destroyed per episode. The single failure was seed 10010 at
+4.4s. Config: 16 candidates, 30-decision (2.0s) horizon, epsilon 0.35, seeds 10000-10031,
+`metrics/planning-oracle.json`.
+
+| policy | round 26 clear |
+|---|---:|
+| greedy | 0.266 |
+| pilot | 0.484 |
+| PPO v7 (last 10 evals) | 0.713 |
+| **promotion gate** | **0.800** |
+| **planning oracle** | **0.969** |
+
+**This closes the question that blocked every decision since 2026-08-23.** The 0.80 gate is
+reachable. The agent is not at a ceiling. Everything built on the opposite premise is void:
+the per-round measured gate, plateau promotion, and the frame-skip retrain. Not lowering the
+gate was the right call -- doing so would have promoted a mediocre policy up the ladder and
+hidden a 26-point skill gap behind a rising round number.
+
+**Caveat, stated rather than buried.** The oracle deepcopies the simulation's RNG, so inside
+its 2-second horizon it knows exactly what spawns. 0.969 is therefore an upper bound a
+reactive policy cannot fully reach. Round 26's spawn interval is 1.67s, so only about one
+spawn falls inside the horizon and most of the oracle's advantage is verified dodging rather
+than clairvoyance -- but the honest reading is that the reactive ceiling lies between 0.713
+and 0.969, not that it is 0.969.
+
+**Why the pilot misled for three days.** It clears 0.484 where the oracle clears 0.969, so
+it was measuring its own lack of lookahead, not the task's difficulty. Any future ceiling
+claim needs a baseline that can be shown to be strong, not merely reasonable. The oracle's
+candidate 0 is the unperturbed pilot precisely so it can never score below it.
+
+**Where this leaves the work.** The plateau is a learning failure with real headroom, and
+the leads are, in order:
+
+1. **The critic.** `explained_variance` 0.479 with excursions below zero, `value_loss` 14.09.
+   Candidates: raise `vf_coef` from 0.5, widen the value head, normalize returns.
+2. **Observation.** v7 bought +0.040 clear over v5 -- the only intervention that has ever
+   moved this number by itself.
+3. **Not exploration.** Closed on 2026-08-25 at -5.2 sigma.
+
+---
+
+## 2026-08-25 (evening): evaluation parallelized, 4.5x, bit-for-bit identical
+
+**v7 posted 0.812 -- the first evaluation in this project ever to clear the 0.80 bar.**
+Champion at episode 99,000: `clear_estimate` 0.771, `completion_estimate` 0.896, clear
+window [0.719, 0.781, 0.812]. Last 15 evaluations average 0.703 against 0.664 for the 15
+before. The improvement is compounding, not linear. At a true rate near 0.77 promotion needs
+roughly 3 more evaluations.
+
+**Evaluation now fans its seeds across processes.** `evaluate_ppo_stages` collected every
+scored seed -- current round and retention together -- into one job list and maps it over a
+`ProcessPoolExecutor`:
+
+```
+88 episodes (64 current + 3 retention rounds x 8), v7 champion, round 26
+serial     51.3s
+parallel   11.5s     4.47x       every field of every stage identical
+```
+
+Pinned by `test_parallel_evaluation_reproduces_the_serial_path_exactly`. 222 tests pass.
+
+Details that matter:
+
+- **The serial path is kept** for recurrent policies (hidden state makes episodes
+  order-dependent) and for team rounds with a companion policy (not picklable). Those are
+  correctness cases, not performance ones.
+- **`spawn`, not `fork`.** The trainer already owns torch threads and 8 SubprocVecEnv
+  children, and forking a multithreaded process deadlocks on Linux. SB3 constructs its vec
+  env with `start_method="spawn"` here for the same reason. Verified on the VM's ARM/Linux.
+- Worker count is `min(8, cpu_count)`, overridable with `PPO_EVAL_WORKERS`.
+
+**Cumulative throughput.** 250 training episodes plus one evaluation: 144.3s originally,
+113.7s after the retention cut, **75.7s** with parallel evaluation -- **1.91x** overall.
+
+**`EVAL_EVERY` restored to 500.** The 2026-08-24 reasoning said cadence was free while the
+clear rate sat at 0.65, because promotion needed 14,222 evaluations of luck at that level.
+At 0.771 each evaluation is a real lottery ticket (P(pass) ~ 0.29, ~3 evaluations to
+promote), so halving the cadence was halving the tickets. Parallel evaluation makes the
+cost of going back to 500 much smaller than it was.
+
+**Two eval improvements considered and declined:**
+
+- *Pooling the promotion window* (256 episodes, sd 0.030 instead of 0.053) is a better
+  estimator but removes the lucky-draw channel the run is currently promoting through.
+  Revisit once the true rate is at the bar.
+- *Abandoning hopeless evaluations early* would cut cost substantially but destroys the
+  precise clear-rate estimate the slope fitting depends on -- which is how this run has been
+  read all week.
+
+**On sample size.** `evaluation_episodes = 64` is not obviously too small. Because the gate
+is a threshold, a larger sample makes promotion *harder*: at a true 0.77, P(an evaluation
+reads >= 0.80) is ~0.29 at n=64, ~0.24 at n=100, ~0.20 at n=128. Bigger samples give a
+better estimate and a slower gate.
+
+---
+
+## 2026-08-25 (later): the entropy line is dead, and the ceiling probe is running
+
+**v8 falsified the exploration hypothesis at -5.2 sigma.** Forked from `models/v7-champion`
+with `PPO_ENTROPY_FLOOR=0.8`, everything else identical to v7:
+
+```
+v8 clear-rate slope   -0.0187/1k   se 0.0036   ->  -5.2 sigma  (25 evals, 14,000 episodes)
+  first 8 evals 0.631  ->  last 8 evals 0.475
+v7 over the same window: +0.0010/1k, last 8 evals 0.627
+```
+
+The controller worked exactly as designed -- `ent_coef` reached its 0.02 ceiling by episode
+858 and entropy rose 0.517 -> 0.792 against the 0.8 floor -- and the policy got worse the
+whole way. Stopped at 14,000 episodes; checkpoints kept in `models/v8-entfloor`.
+
+**Entropy is now a closed question.**
+
+| `ent_coef` | entropy | outcome |
+|---|---|---|
+| 0.01 fixed | 1.07 nats | pinned, run stalled |
+| 0.02, floor 0.8 | 0.79 nats | **degrades at -5.2 sigma** |
+| 0.0025 fixed | 0.50 nats | slowly improves |
+
+**Low entropy is correct for this task.** The near-deterministic policy was diagnosed as a
+pathology on 2026-08-21 and is in fact the solution: in a game where one bad decision is
+fatal, hedging three ways per decision dies. Every intervention that added exploration has
+hurt. This retires the `EntropyFloorController` (commit 3031478) and the whole exploration
+line, including the 2026-08-21 reading that "the binding constraint is exploration rather
+than difficulty".
+
+**A note on reading runs early.** I withheld judgement on v8 at 7,500 episodes citing
+"v7 looked dead for 25,000". That was the wrong reference: v7 was *flat*, v8 was in a
+monotone 5-sigma decline. Flatness needs patience; a significant downward trend does not.
+
+**The ceiling probe is running.** `scripts/planning_oracle.py` measures what perfect
+information achieves: at every decision it deepcopies the true `Simulation` (which holds one
+seeded `random.Random`, so future spawns reproduce exactly), rolls K=16 candidate plans H=30
+decisions ahead, and commits the best first action. Candidates are closed-loop perturbations
+of the pilot -- candidate 0 is the unperturbed pilot -- so the oracle cannot score below the
+pilot except by sampling noise. That property is the point: a weak oracle failing to clear a
+bar would prove nothing.
+
+Smoke test on round 26 cleared 2 of 2 seeds where the pilot gets 0.484. Full run is 32 seeds
+on the VM at `nice -n 19` alongside training, writing `metrics/planning-oracle.json`.
+
+**What it decides.** Oracle clears ~0.95 -> real headroom exists, the 0.80 gate is fair, and
+the critic (`explained_variance` 0.479) is the next lead. Oracle clears ~0.65 -> the agent is
+at the practical ceiling and the gate has been an impossible target for 99,000 episodes.
+
+---
+
+## 2026-08-25: v7 is learning, and too slowly to reach the gate
+
+**v7 at 96,000 episodes, all on round 26.** 136 evaluations:
+
+| window | evals | clear | slope / 1k |
+|---|---:|---:|---:|
+| 0-25k | 49 | 0.631 | +0.0010 (se 0.0012) |
+| 25k-40k | 30 | 0.656 | +0.0070 (se 0.0026) |
+| 40k-95k | 57 | 0.668 | +0.0008 (se 0.0005) |
+
+Best ever **0.797** at episode 91,000 -- one episode short of the bar. Still 0 evaluations
+at 0.80 and no promotion. The level is genuinely rising (0.631 -> 0.668, the first sustained
+progress on round 26) but the burst has decayed. At +0.0008/1k, reaching 0.75 -- where
+promotion becomes practical at 9 evaluations instead of 1,452 -- is ~100,000 more episodes,
+about 18 days on the VM. And round 26 is one rung of 96, with round 29 going to all-large.
+
+**Grinding does not finish this curriculum.** What is needed is a step change in learning or
+a change in what counts as success. That choice has not been made explicitly.
+
+**The measurement apparatus is sound.** Clear rate by validation panel across all 136
+evaluations: panel means 0.667 / 0.629 / 0.659 / 0.655, between-panel sd of means 0.014,
+observed sd 0.065 against a binomial 0.060. No easy panel to land on; the 0.797 was a draw.
+
+**The overnight v8 run lost the night to sleep.** In-process wall clock was 0.77 h against
+10.6 h elapsed -- about 46 minutes of compute. Cause: the Mac was on **battery**, and
+`caffeinate -s` asserts `PreventSystemSleep` only on AC power; on battery it silently
+degrades to the idle assertion, which macOS overrides. **Any future Mac run must be on AC.**
+Throughput when awake was fine: 9,750 episodes/hour, 1.8x the VM.
+
+v8 telemetry over its 7,500 episodes: `ent_coef` reached its 0.02 ceiling by episode 858 and
+stayed pinned; entropy rose 0.517 -> 0.771 against the 0.8 floor, so the controller works.
+Short-term cost as expected -- completion fell 77% -> ~53% as the policy got noisier. Far too
+early to read; v7 looked dead for 25,000 episodes.
+
+**Still unresolved, and now blocking the decision: the ceiling.** Whether a competent player
+clears round 26 at ~0.9 or ~0.7 at the agent's 15Hz decision rate decides whether to invest
+in learning (entropy, critic, observation) or to fix the gate. The one logged human run was
+2 of 5, which distinguishes nothing. 20-30 episodes through `compare` settles it and is
+worth more than the next 100,000 training episodes.
+
+---
+
+## 2026-08-24 (evening): v8 entropy-floor arm launched on the Mac
+
+**Two arms now run concurrently on different machines, one variable apart.**
+
+| | control | treatment |
+|---|---|---|
+| run | `oracle-survival-v2-v7` (Oracle VM) | `models/v8-entfloor` (Mac) |
+| start | `checkpoint_039000` | `models/v7-champion` (episode 34,500) |
+| ent_coef | 0.0025 fixed | 0.0025 base, floor 0.8 nats, cap 0.02 |
+| everything else | identical | identical |
+
+Launched with `caffeinate -is` so the Mac cannot sleep through it, `--parallel-envs 8` to
+match the VM rather than use all 10 cores, budget 80,000 episodes.
+
+**Why this arm.** Telemetry from v7's last 400 updates:
+
+```
+policy entropy   0.498 nats (max ln 16 = 2.77);  first 50: 0.491,  last 50: 0.500
+approx_kl        mean 0.0164, exceeds the 0.02 target on 24% of updates
+explained_var    mean 0.479, min -0.490
+value_loss       mean 14.09, max 42.46
+```
+
+The policy is effectively deterministic -- about 1.6 live actions per decision -- and flat,
+so it is not recovering on its own. `ent_coef` 0.01 previously pinned entropy at 1.07 and
+stalled; 0.0025 lets it collapse. The floor is the interpolation between two measured
+failures, and it had been built, tested and staged since commit 3031478 without ever running.
+
+First 250 episodes: survival 27.1s, completion 77.2%. The controller is ramping as designed
+(`ent_coef` 0.0025 -> 0.0194 by episode 310, tracking toward the 0.02 ceiling).
+
+**Reward was ruled out as a cause**, from 3,000 v7 episodes:
+
+```
+survival_reward   +38.82  (64.3%)      CLEARED episodes: reward 72.46
+hit_reward        +16.66  (27.6%)      DIED episodes:    reward 30.93
+round_clear       + 7.09  (11.7%)
+```
+
+76% of reward comes from staying alive and clearing pays 2.3x dying, so the policy is not
+being paid to farm rocks at the expense of survival.
+
+**Second lead, not yet acted on: the critic is weak.** `explained_variance` 0.479 with
+excursions below zero means the value function sometimes does worse than predicting the
+mean. With `gamma = 0.997` over 450-decision episodes, GAE advantages built on that critic
+are noisy enough to cap policy improvement independently of exploration. Candidates: raise
+`vf_coef` from 0.5, widen the value head, or normalize returns.
+
+**Promotion arithmetic, which settled the eval-cadence question.** Probability an evaluation
+reads >= 0.80 clear over 64 episodes, and of getting 2 such in a 4-evaluation window:
+
+| true clear | P(eval passes) | P(2 of 4) | evaluations to promote |
+|---:|---:|---:|---:|
+| 0.650 | 0.0034 | 0.00007 | 14,222 |
+| 0.700 | 0.0299 | 0.0052 | 194 |
+| 0.750 | 0.1558 | 0.1172 | 9 |
+| 0.800 | 0.4752 | 0.6494 | 2 |
+
+At the current ~0.65 the lucky-draw channel does not exist, so evaluation cadence costs
+nothing until the policy genuinely reaches ~0.75. This reverses yesterday's reasoning for
+keeping `EVAL_EVERY=500`. **Restore 500 once the clear estimate crosses ~0.72**, where each
+draw starts to be worth something.
+
+**Also rejected on measurement:** `n_epochs` 10 -> 5. `approx_kl` exceeds target on only 24%
+of updates, so 76% genuinely use all ten epochs -- it would trade learning per sample for
+speed, not buy free speed.
+
+---
+
+## 2026-08-24: v7 was not dead, and evaluation was eating a third of the compute
+
+**v7 started learning after 25,000 flat episodes.** I called it "confirmed finished
+learning" at episode 25,500 on a slope of +0.0004/1k with se 0.0013. It then moved:
+
+| window | evals | clear | slope / 1k |
+|---|---:|---:|---:|
+| all (500-38,000) | 76 | 0.638 | +0.0012 (se 0.0007) |
+| first 25k | 50 | 0.629 | +0.0004 (se 0.0013) |
+| after 25k | 27 | 0.649 | **+0.0059 (se 0.0032)** |
+
+Best eval rose 0.734 -> 0.750 and the training log moved 63% -> 71% completion, which is
+independent of the eval seeds. At 1.8 sigma it is not significant, but the direction is
+corroborated twice over. **Do not stop it.**
+
+**Consequence: kill the plateau-promotion idea.** A rule that promoted after ~20 flat
+evaluations would have fired around episode 10,000 and thrown this run away. Flatness over
+50 evaluations is not evidence a run is finished. This is the third conclusion in two days
+that a longer measurement reversed.
+
+**Evaluation was 55% of wall-clock time.** Measured locally from the v7 champion at
+`--parallel-envs 8`, 250 training episodes:
+
+| configuration | wall | eval cost |
+|---|---:|---:|
+| no evaluation | 64.2s | -- |
+| one evaluation, `retention_sample = 10` | 144.3s | 80.1s |
+| one evaluation, `retention_sample = 3` | 113.7s | 49.5s |
+
+Two compounding causes. First, `evaluate_ppo_stages` loops seeds **one at a time on a
+single env** (`ppo.py:200-201`) while training runs 8 in parallel, so 7 of 8 workers idle
+through every evaluation. Second, 80 of the 144 episodes were retention -- and across
+**422 evaluations retention failed 0 times and blocked 0 promotions**.
+
+**Applied:** `retention_sample` 10 -> 3. Measured **1.27x overall throughput**, live on the
+VM from `checkpoint_039000`. Curriculum eval settings are not part of `task_hash`, so this
+resumed rather than needing a fork.
+
+**Rejected:** `OMP_NUM_THREADS=1`. Predicted 20-40%, measured **+1.7%** on the Mac (64.2s
+-> 63.1s). The VM's regime (8 workers x 4 threads on 4 cores, box at 62% utilization) is
+not reproducible on a 10-core Mac, so this is ruled out here but not there.
+
+**Rejected:** `EVAL_EVERY` 500 -> 1000. It would raise throughput ~36%, but each evaluation
+is an independent 64-episode draw at the promotion gate and promotion currently depends on
+catching a lucky draw -- halving the cadence halves the draws per episode budget, which
+partly cancels the gain.
+
+**Next, and the biggest remaining win:** evaluation is still 49.5s of every 113.7s (44%).
+Parallelizing the eval loop across the 8 envs that already exist and sit idle would cut it
+to roughly 8-10s -- about another 1.5x, with no loss of resolution or promotion draws.
+Requires care: evaluation is the project's only trustworthy signal, so any change must
+reproduce the serial path's per-seed results exactly before it ships.
+
+---
+
+## 2026-08-23 (latest): round 26 is UNRESOLVED -- do not act on either conclusion
+
+Tonight produced two opposite conclusions and neither is established. Recording the
+evidence instead of a verdict.
+
+**The logged human run** (`metrics/comparison.json`, seeds 50000-50009, round 26 per the
+command used, `./run.sh compare survival-v2 26 10`):
+
+| contender | n | clear | survival times |
+|---|---:|---:|---|
+| human | 5 | 0.40 | 30.0, 30.0, 16.9, 24.1, 10.2 |
+| greedy | 10 | 0.20 | |
+| pilot | 10 | 0.40 | |
+| `oracle-r26` (v5 champion) | 10 | **0.70** | 30.0, 17.6, 30.0, 27.6, 30.0, 6.5, 30.0 x4 |
+
+The human recollection was "survived pretty much each time, deaths easily avoidable"; the
+log says 2 of 5, and the model outscored the human on the same seeds. Only 5 of 10 human
+episodes were recorded, so that run appears to have ended early. At n=5 the 95% interval
+is roughly 0.05-0.85 -- wide enough to contain every position taken tonight.
+
+**Decision-rate measurement** (scripted pilot, round 26, 48 seeds, only `frame_skip` varies):
+
+| frame_skip | decisions/s | pilot clear | completion |
+|---:|---:|---:|---:|
+| 8 | 8 | 0.083 | 0.427 |
+| 4 | 15 | 0.458 | 0.679 |
+| 2 | 30 | **0.833** | 0.891 |
+| 1 | 60 | 0.771 | 0.902 |
+
+Real and large (~5 sigma at fs 4 -> 2), but it measures the *pilot*, which is
+reaction-limited. `compare` samples human input once per decision, so the human above was
+also at 15Hz -- meaning this does not show that 15Hz binds the *learner*. Do not retrain at
+`frame_skip 2` on the strength of it.
+
+**What is NOT established:** that the 0.80 gate is unreachable; that the gate is fair; that
+frame skip is the constraint; that the agent has 27 points of headroom. Every one of those
+was asserted tonight and none survived contact with the next measurement.
+
+**What IS established, and holds across all of it:** PPO clears 0.626 on round 26 against
+pilot 0.458 and greedy 0.266, and its learning slope there is +0.0000/1k over 112,500
+episodes across three observation versions, two entropy settings and a softened bridge rung.
+The agent beats every baseline available and has stopped improving.
+
+**What would settle it:** 20-30 human episodes through `compare` on round 26 after warm-up
+(gives +-0.09 instead of +-0.4). Failing that, a planning oracle with true simulator state
+(feasible: `Simulation` deepcopies exactly, measured 0.67ms copy + 0.14ms/step, ~2 min per
+episode single-core, ~8 min per 32-seed round across 8 workers).
+
+**Tooling gap found:** `metrics/comparison.json` records seeds, lineup and checkpoint but
+not the curriculum or round, so a logged comparison cannot be verified after the fact.
+
+---
+
+## 2026-08-23 (superseded): a human clears round 26, so the gate is fair
+
+Michael played round 26 and survived "pretty much each time", with occasional deaths he
+described as easily avoidable. That contradicts the ceiling conclusion recorded below.
+**The 0.80 clear gate is reachable; the section that follows is wrong about the cause.**
+
+What survives from it, and what does not:
+
+- **Still true:** every measured number. Pilot clears 0.484 on round 26, greedy 0.266, PPO
+  0.626. The learning slope on round 26 is +0.0000/1k over 112,500 episodes across three
+  observation versions, two entropy settings and a softened bridge rung. The ladder really
+  is non-monotonic (27 easier than 26 for the pilot).
+- **Wrong:** the inference that the *gate* was therefore unreachable. The scripted pilot is
+  a weak reference with no lookahead -- it was measuring the pilot, not the task. Do not
+  lower `promotion_clear_rate`, and do not add plateau promotion yet; both would promote a
+  mediocre policy up the ladder and hide the real gap behind a rising round number.
+- **The real problem:** the task allows ~0.9, the policy sits at 0.627 and has been flat
+  there for 112,500 episodes. That is a learning failure with 25+ points of headroom.
+
+**Open confound before treating the human number as decisive.** The agent decides every 4
+frames at 60fps -- 15 decisions/s. `compare` samples human input once per decision to match
+that; `play` gives a human all 60. If the human runs were played through `play`, the result
+does not yet establish that a 15Hz policy can clear round 26, and "easily avoidable" may
+mean "avoidable at 4x the reaction rate". Re-measure through `compare`, and measure the
+pilot at frame_skip 2 against frame_skip 4, before concluding.
+
+**Next measurement is diagnostic, not another training arm:** characterize *how* the
+champion dies on round 26 (bearing of the killing asteroid, whether it was in the
+observation, time on field, ship velocity) and compare against the human's avoidable
+deaths. Frame skip, observation gaps, and entropy collapse are the live hypotheses.
+
+---
+
+## 2026-08-23: round 26 is not a learning failure, it is a gate above the ceiling (SUPERSEDED -- see above)
+
+**The plateau is the promotion bar, not the learner.** `configs/rl-survival-v2.toml`
+applies one fixed gate to all 96 rounds -- `promotion_completion = 0.90` and
+`promotion_clear_rate = 0.80`. Scoring the scripted `pilot` baseline (leads its shots,
+thrusts away from rocks whose closest approach is inside its radius) on the exact training
+evaluation env and seeds shows the bar passes above every known policy from round ~24 on:
+
+| round | pilot clears | round | pilot clears |
+|---:|---:|---:|---:|
+| 20 | 0.969 | 28 | 0.438 |
+| 21 | 0.969 | 29 | 0.406 |
+| 22 | 0.938 | 30 | 0.312 |
+| 23 | 0.766 | 32 | 0.125 |
+| 24 | 0.812 | 35 | 0.156 |
+| 25 | 0.719 | 40 | 0.094 |
+| 26 | **0.484** | | |
+| 27 | 0.547 | | |
+
+(64 seeds for rounds 23, 25, 26, 27; 32 seeds elsewhere; seeds from 10000, `_stage_env`,
+observation v7.)
+
+**The agent is already the best policy on the round it is stuck on.** Round 26, same env:
+
+| policy | clear | completion |
+|---|---:|---:|
+| greedy | 0.266 | 0.602 |
+| pilot | 0.484 | 0.711 |
+| PPO v7 champion | **0.626** | **0.824** |
+| the gate | 0.80 | 0.90 |
+
+The old headline that "no trained model has ever beaten the greedy baseline" is obsolete.
+It beats greedy 2.4x and the pilot by 29% relative, and still cannot promote.
+
+**How much compute the gate has eaten.** Fitting each run's own evaluations on its stage:
+
+| run | round | evals | episodes | clear | slope / 1k episodes | evals >= 0.80 |
+|---|---:|---:|---:|---:|---:|---:|
+| `oracle-survival-v2-postbridge-safe` | 23 | 8 | 3,500 | 0.762 | +0.0134 (se 0.0142) | 2 -> promoted |
+| same | 24 | 22 | 10,500 | 0.748 | +0.0070 (se 0.0046) | 5 -> promoted |
+| same | 25 | 49 | 24,000 | 0.729 | +0.0006 (se 0.0012) | 6 -> promoted |
+| same | **26** | **226** | **112,500** | 0.595 | **+0.0000 (se 0.0001)** | **0** |
+| `oracle-round26-bridge` | bridge rung | 41 | 20,000 | 0.706 | -0.0008 (se 0.0015) | **0** |
+| `oracle-survival-v2-v7` | 26 | 38 | 18,500 | 0.626 | +0.0003 (se 0.0018) | **0** |
+
+Zero slope on round 26 across three observation versions, two entropy settings and a
+softened bridge rung. The bridge is the decisive one: an intentionally *easier* rung, built
+specifically to walk the cliff, also never reached 0.80 in 20,000 episodes. A difficulty
+step cannot explain a bar nothing can reach.
+
+**What has been tried against this plateau, and what each was worth.**
+
+| attempt | result |
+|---|---|
+| `ent_coef` 0.01 | entropy pinned at 1.07 nats, no learning |
+| `ent_coef` 0.0025 | promoted rounds 23-25, then flat on 26; entropy decays to 0.588 |
+| adaptive entropy floor (`PPO_ENTROPY_FLOOR`, commit 3031478) | v8 config staged, **never deployed** |
+| learning rate 1e-4 | stalled at 0.63 on round 23; 5e-5 promoted through 25 |
+| round-23 bridge | worked -- that cliff was real |
+| round-26 bridge | 20,000 episodes, 0.706, 0 passes |
+| v6 observation (wrap-safe absolute position) | abandoned at 2,500 episodes, clear fell to 0.628 with a negative slope |
+| v7 observation (collision threat + fragment context) | **+0.040 clear** over v5's last 38 evals (0.626 vs 0.586, ~2.8 sigma) -- a real one-time transfer gain, but the slope is still zero |
+
+**The ladder is also not monotonic.** Round 27 is easier for the pilot than round 26
+(0.547 vs 0.484), and round 35 easier than round 32 (0.156 vs 0.125). Round 26 is a spike,
+not a step: it is where the size composition goes `[2,2,2,3]` -> `[2,2,3,3]`, and round 29
+goes to all-3, which is harder still. Ordering rounds by a *declared* knob rather than by
+measured difficulty puts spikes in the middle of the ramp.
+
+**Pooling alone would make this worse.** The 2026-08-21 next step was to judge the pooled
+~256 episodes of a promotion window instead of requiring two individually lucky
+evaluations. That reclaims statistical power, but with a true clear rate of 0.63 against a
+0.80 bar the only route through the gate *is* a lucky draw -- pooling removes it. Pool only
+once the bar is achievable.
+
+**What to do, in order.**
+
+1. **Make the per-round clear target a measured quantity.** Set
+   `promotion_clear_rate` per round to `min(0.80, pilot_clear + margin)` from the table
+   above. Round 26 becomes ~0.55-0.60, which the current policy already passes, and the
+   ladder unblocks immediately. This is the fix; the rest are guards.
+2. **Add a plateau-promotion rule.** If a round's clear-rate slope is statistically
+   indistinguishable from zero over ~20 evaluations (10,000 episodes), promote and record
+   "advanced without mastery". No round should ever cost 112,500 episodes again.
+3. **Then** pool the promotion window, for power, against the achievable bar.
+4. **Re-space the ladder by measured pilot clear rate**, so difficulty is monotone and the
+   26-vs-27 inversion goes away.
+5. **Deploy v8 (the entropy floor) as its own arm**, and judge it on *slope* over ~10,000
+   episodes rather than on whether it promotes. Kill it if the slope is zero.
+
+**Also worth keeping:** the v7 observation is a genuine +4 points of clear rate and should
+be carried forward into whatever runs next.
 
 ---
 
