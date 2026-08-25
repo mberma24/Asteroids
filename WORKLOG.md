@@ -8,6 +8,102 @@ Last updated: 2026-08-26.
 
 ---
 
+## 2026-08-25 (co-op): centralized joint two-ship trainer
+
+The frozen-companion PPO and the per-episode MAPPO experiment did not optimize the actual
+two-ship outcome reliably. `train-team` now owns that objective end to end: both v7 local
+observations are concatenated, one policy chooses a correlated 256-way joint action, either
+death terminates the episode, and only both ships alive at the wave/survival limit counts as
+success. Simultaneous fire is masked, while badly aimed individual shots can still cause
+full friendly-fire death and penalty.
+
+The curriculum has four mandatory-shooting finite waves, introduces ship collision and
+friendly fire separately, then three 30-second survival bridges and all 96 production
+rounds. Episode sampling is 80% current, 10% foundational waves, 10% older rehearsal.
+Promotion evaluates the learned policy alone on fixed seeds and pools the preceding two
+stages for retention; scripted controllers carry no training or evaluation weight.
+
+The first smoke run completed model creation, rollout, evaluation, metadata, curriculum
+state, and checkpoint reload. Focused centralized environment tests cover joint action
+mapping, masks, either-ship terminal failure, and team-only success.
+
+An 8,192-step probe held at the intended stage-1 gate: 50% clears on eight fixed held-out
+seeds against the 85% requirement, 1.125/2 rocks destroyed, 27.6 shots, and zero friendly
+fire. That is early task learning, not mastery; no claim is made that the complete 103-stage
+curriculum has already converged.
+
+---
+
+## 2026-08-25 (co-op): the run was training one seat and flying two
+
+`models/coop2-v4` ran 28,500 episodes on warm-up 1 (two rocks) and pooled at 29.7% clear
+against an 85% bar. Accuracy fell the whole way -- 0.075 -> 0.025 -- while shots rose 19 ->
+73. The co-operation metrics looked like a success story: teammate deaths 47% -> 8.6%,
+friendly fire dealt 28% -> 6.2%, collisions 8.3% -> 0.0%.
+
+The reward breakdown said otherwise. Over the last 3,000 episodes:
+
+```
+survival_reward          23.199        friendly_fire_penalty     3.017   <- 60.3% of episodes
+miss_penalty              4.451        friendly_fire_dealt_pen   1.910   <-  6.4% of episodes
+round_clear_reward        2.850        death_penalty             0.172   <-  3.4% of episodes
+asteroid_reward           0.357
+```
+
+**Sixty percent of episodes ended with the learner shot by its own partner, and the partner
+was a copy of the learner.** Asteroids killed it in 3.4%. Nothing the asteroid curriculum was
+teaching mattered next to that.
+
+### Two bugs, found by putting one checkpoint in both ships and counting who shot whom
+
+```
+learner in ship1:  ship1 LEARNER   teammate-kills  3 ( 5% of eps)
+                   ship2 companion teammate-kills 21 (35% of eps)
+learner in ship2:  ship1 companion teammate-kills  5 ( 8% of eps)
+                   ship2 LEARNER   teammate-kills 22 (37% of eps)
+```
+
+**The gap follows the SEAT, not the role.** Same weights, seven times the fratricide from one
+side of the arena. Ships spawn at fixed mirrored poses -- ship1 at y=370 facing up, ship2 at
+y=530 facing down -- and the network is not equivariant to that mirroring, so 28,000 episodes
+of gradient shaped ship1's pose and left ship2's completely unshaped. The learner flew ship1
+in every single episode. **Fix: the seat is redrawn from the episode seed**, so both poses get
+gradient and a seed still means one fixed episode.
+
+**Companions were reading their own present as their most recent past.** `_observation()`
+encodes the learner against strictly past positions and *then* folds this decision into the
+shared history. Companion actions were encoded at the top of `step()` -- one line after that
+record -- so each asteroid's current position sat at the head of its own history. Velocity is
+inferred from exactly that gap, so every companion flew as if the world were frozen. **Fix:
+companion observations are encoded alongside the learner's**, on the correct side of the
+record. Same cost, they were being encoded once per decision either way.
+
+Pinned by `test_a_companion_sees_exactly_what_it_would_see_as_the_learner` (the same ship in
+the same world must get the same observation from either seat -- it inspects what the policy
+is *handed*, not what the env cached, because the cache passes either way) and
+`test_the_learner_does_not_always_fly_the_same_ship`.
+
+### What this invalidates
+
+Every co-op run to date -- `coop2-scratch`, `coop2-v1`, `coop2-v2`, `coop2-v3`, `coop2-v4`.
+All of them trained one seat, and in all of them the dominant cause of death was an unshaped
+copy of the learner shooting it in the back. The reward tuning done across those runs
+(`friendly_fire_dealt_penalty = 30.0` and the rest) was aimed at the 6% case while the 60%
+case had no gradient reaching it at all.
+
+### v5
+
+`cloud/asteroids-coop2-v5.conf`, `models/coop2-v5`, from scratch. Everything else stands: the
+2 -> 4 -> 6 warm-up ladder, team-survival clearing, the collision and friendly-fire penalties,
+the teammate-aware safety potential, and teammate projectiles that cannot be crowded out.
+
+Expect `friendly_fire_taken` and `friendly_fire_dealt` to converge on each other now -- if
+they stay an order of magnitude apart, the seat rotation is not doing its job. In the first
+500 episodes `friendly_fire_taken` is 0 by construction: `companion.zip` does not exist yet
+and companions hold station until the first snapshot lands.
+
+---
+
 ## 2026-08-25 (co-op): an empty first round taught the policy never to fire
 
 `models/coop2-v3` cleared warm-up 1 -- an arena with no asteroids in it, built to isolate
