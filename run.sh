@@ -621,9 +621,19 @@ cmd_finish() {        # continue until every curriculum stage is mastered (or sa
 }
 
 cmd_graph() {
-  local dir="${1:-$(ls -dt models/*/ 2>/dev/null | head -1)}"
+  local dir view
+  case "${1:-}" in
+    completion|survival|both|all)
+      dir="$(ls -dt models/*/ 2>/dev/null | head -1)"
+      view="$1"
+      ;;
+    *)
+      dir="${1:-$(ls -dt models/*/ 2>/dev/null | head -1)}"
+      view="${2:-both}"
+      ;;
+  esac
   dir="${dir%/}"
-  $PY -m asteroid_survival graph --run "$dir"
+  $PY -m asteroid_survival graph --run "$dir" --view "$view"
 }
 
 cmd_pull() {         # copy a run's champion down from the training box, to preview locally

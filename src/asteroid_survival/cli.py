@@ -474,6 +474,9 @@ def main(argv: list[str] | None = None) -> int:
     graph_parser = sub.add_parser("graph", help="graph held-out progress for a model run")
     graph_parser.add_argument("--run", type=Path, required=True)
     graph_parser.add_argument("--output", type=Path)
+    graph_parser.add_argument(
+        "--view", choices=("completion", "survival", "both", "all"), default="both",
+        help="rate lines to show; 'all' preserves the legacy four-panel report")
     preview_parser = sub.add_parser(
         "preview", help="watch the best evaluated checkpoint from a curriculum run")
     preview_parser.add_argument("target", type=Path, help="run directory or checkpoint")
@@ -550,7 +553,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "graph":
         from .rl.plotting import plot_progress
         output = args.output or args.run / "progress.svg"
-        print(f"saved graph: {plot_progress(args.run, output)}")
+        print(f"saved graph: {plot_progress(args.run, output, view=args.view)}")
         return 0
     if args.command == "arena":
         controllers = ["human"] + [name for name in args.opponents.split(",") if name]

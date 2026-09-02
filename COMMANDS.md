@@ -333,7 +333,7 @@ INITIALIZE_FROM=models/my-run/champion START_STAGE=35 \
 |---|---|---|---|
 | `status [dir]` | run directory | the live run, else newest | Progress, champion, recent held-out evaluations |
 | `follow [dir]` | run directory | the live run, else newest | `status` once, then every new evaluation as it lands |
-| `graph [dir]` | run directory | newest | Writes `progress.svg` into the run |
+| `graph [dir] [both\|completion\|survival\|all]` | run directory, view | newest, `both` | Writes `progress.svg`; `all` is the legacy four-panel report |
 | `baseline [N]` | episodes | `60` | Scores the greedy controller |
 | `test` | — | — | Runs the test suite |
 | `test-team CHECKPOINT` | checkpoint | — | Scores a centralized or legacy team policy |

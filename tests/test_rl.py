@@ -357,6 +357,49 @@ def test_curriculum_progress_graph_adds_stages_after_promotion(tmp_path):
     assert "stationary" in svg and "linear" in svg
 
 
+def test_progress_graph_can_select_completion_survival_or_both(tmp_path):
+    import json
+
+    from asteroid_survival.rl.plotting import plot_progress
+
+    run = tmp_path / "run"
+    run.mkdir()
+    records = [
+        {"environment_steps": step, "training_stage": 0,
+         "stages": [{"name": "round-1", "completion_rate": completion,
+                     "survival_fraction": survival}]}
+        for step, completion, survival in ((100, 0.4, 0.7), (200, 0.6, 0.8))
+    ]
+    (run / "evaluation.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+    completion = plot_progress(run, tmp_path / "completion.svg", view="completion").read_text()
+    survival = plot_progress(run, tmp_path / "survival.svg", view="survival").read_text()
+    both = plot_progress(run, tmp_path / "both.svg", view="both").read_text()
+    assert 'data-metric="completion"' in completion
+    assert 'data-metric="survival"' not in completion
+    assert 'data-metric="survival"' in survival
+    assert 'data-metric="completion"' not in survival
+    assert 'data-metric="completion"' in both and 'data-metric="survival"' in both
+
+
+def test_progress_graph_supports_centralized_team_evaluations(tmp_path):
+    import json
+
+    from asteroid_survival.rl.plotting import plot_progress
+
+    run = tmp_path / "team-run"
+    run.mkdir()
+    record = {"environment_steps": 1024, "training_stage": 3,
+              "current": {"name": "team-round-4", "success_rate": 0.6,
+                          "mean_alive_ship_time_fraction": 0.75}}
+    (run / "evaluation.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    svg = plot_progress(run, tmp_path / "team.svg", view="both").read_text()
+    assert "team-round-4" in svg
+    assert 'data-metric="completion"' in svg and 'data-metric="survival"' in svg
+
+
 def test_mobile_observation_contains_ship_velocity():
     config = rl_config()
     config.ship.mobile = True

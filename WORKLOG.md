@@ -8,6 +8,40 @@ Last updated: 2026-09-02.
 
 ---
 
+## 2026-09-02 (later): deterministic fragments lift the reactive ceiling to 1.0; v12 launched
+
+`AsteroidConfig.fragment_motion = "inherit"`: a split rock's pieces keep the parent's pattern,
+swing and phase, and its speed rescaled by the size multipliers. The default stays `random`
+and is stripped from the task hash, so no existing checkpoint is invalidated (262 tests).
+`configs/rl-survival-v2-detfrag.toml` extends survival-v2 with only the base config changed.
+
+**The blind oracle on the new ladder, round 26, same 32 seeds and budget: 32/32, completion
+1.000** (`metrics/planning-oracle-blind-detfrag.json`), against 0.812 on the original. So
+the entire gap between the blind and clairvoyant oracles was the fragment draw; spawn
+clairvoyance was worth nothing measurable. The game now has no death a policy could not in
+principle have seen coming.
+
+The v7 champion dropped onto the new ladder without training clears 0.750 (96 seeds) with
+22 of 24 deaths still self-shot fragments, several at 0.02s -- it fires at rocks that are
+touching it. That is the behaviour v12 has to unlearn, and for the first time the outcome of
+each such shot is a function of what it can see.
+
+**`models/oracle-survival-v2-v12-detfrag`** is running on the VM: v7 champion forked at round
+26, v11's settings (lr 5e-5, ent 0.0025, KL 0.02, pooled 0.75 gate). v11 was stopped at
+12,500 episodes, pooled 0.688 -- healthy, cheap and going nowhere a 0.81 ceiling allows.
+
+What to look for: `death_causes.py` on the v12 champion should show the fragment share of
+deaths falling and killer age at death rising. If the clear rate is still ~0.70 after
+~15,000 episodes with the fragment share unchanged, the policy is not exploiting the
+determinism and the fire-consequence observation block (item 2 of the previous entry)
+becomes the next step.
+
+Housekeeping done: the working tree is committed and pushed, the VM is on `main`
+(its only local drift was stale README text), and `scripts/death_causes.py` takes a
+curriculum and output path.
+
+---
+
 ## 2026-09-02: the round-26 ceiling was clairvoyance, and the agent shoots itself
 
 Two measurements, both on round 26, seeds 10000+.

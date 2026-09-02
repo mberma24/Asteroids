@@ -543,7 +543,10 @@ Runs contain `training.jsonl`, frozen `evaluation.jsonl`, resumable checkpoints 
 and `curriculum_state.json`. Generate `progress.svg` with:
 
 ```bash
-./run.sh graph models/my-run
+./run.sh graph models/my-run                 # completion + survival on one graph
+./run.sh graph models/my-run completion      # completion only
+./run.sh graph models/my-run survival        # survival only
+./run.sh graph models/my-run all             # legacy four-panel report
 ```
 
 Every evaluation saves a matching checkpoint and prints a command for watching it. Watch an
