@@ -18,6 +18,7 @@ not required.
 | `./run.sh rounds survival-v2` | Print every round's exact difficulty |
 | `./run.sh train-ppo-survival-v2 N` | Fork the protected round-16 PPO into v2 |
 | `./run.sh test-ppo CHECKPOINT [ROUND]` | Run the untouched 128-seed final panel |
+| `./run.sh train-team N` | Train one centralized joint policy for exactly two ships |
 | `./run.sh train-mappo-team N` | Train a shared 1–8 ship actor and team critic |
 | `PROTECT=1 INITIALIZE_FROM=TEAM_CHECKPOINT ./run.sh train-mappo-team N` | Train protection after survival |
 | `SHIPS=8 LEVEL=12 ./run.sh test-team CHECKPOINT` | Evaluate a team checkpoint |
@@ -27,7 +28,15 @@ The default v2 source is `models/ppo-survive-0819-1852/champion` (episode 22,000
 human round 16). Override it with `INITIALIZE_FROM`, `START_STAGE`, and `OUTPUT`. Never use
 cross-task `RESUME`: v2 has a new task hash and observation layout.
 
-Team levels 1–12 map to solo-v2 rounds 29, 35, 41, 47, 53, 59, 65, 71, 77, 83, 89, and 96.
+`train-team` is the current two-ship path. Its action is one 256-way joint choice (all
+16×16 action pairs), with at most one ship firing per decision. It starts with four finite
+waves that always require shooting, adds ship collisions and then friendly fire, crosses
+three 30-second survival warmups, and finally trains all 96 real survival rounds. Training
+episodes are 80% current stage, 10% foundational wave rehearsal, and 10% uniformly sampled
+older stages. Held-out promotion uses only this learned policy; greedy and pilot have no
+episode weight. Set `TEAM_STAGE=N` to select a one-based stage for `test-team` or `play-team`.
+
+Legacy MAPPO levels 1–12 map to solo-v2 rounds 29, 35, 41, 47, 53, 59, 65, 71, 77, 83, 89, and 96.
 `MAX_SHIPS` defaults to 8; half the episodes use that frontier count and half rehearse
 smaller teams. The feed-forward solo model is usually CPU/environment-bound, so benchmark
 before reserving a GPU.
@@ -327,6 +336,7 @@ INITIALIZE_FROM=models/my-run/champion START_STAGE=35 \
 | `graph [dir]` | run directory | newest | Writes `progress.svg` into the run |
 | `baseline [N]` | episodes | `60` | Scores the greedy controller |
 | `test` | — | — | Runs the test suite |
+| `test-team CHECKPOINT` | checkpoint | — | Scores a centralized or legacy team policy |
 
 `follow` is `status` that keeps going. It prints the usual block, then one line per
 held-out evaluation as the trainer writes it — round, completion against the promotion gate,

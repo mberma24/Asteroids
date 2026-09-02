@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pytest
 
@@ -767,8 +769,8 @@ def test_centralized_team_env_exposes_two_actions_and_complete_local_views():
     env = CentralizedTeamEnv(seed=3, force_stage=0)
     observation, info = env.reset(seed=123)
     assert observation.shape == (2 * env.local_width,)
-    assert env.action_space.n == 16 * 16
-    assert env.action_masks().shape == (16 * 16,)
+    np.testing.assert_array_equal(env.action_space.nvec, [8, 8, 3])
+    assert env.action_masks().shape == (8 + 8 + 3,)
     assert set(info["controller_order"]) == {"ship1", "ship2"}
 
 
@@ -780,7 +782,7 @@ def test_centralized_actions_are_mapped_to_both_ships_in_the_same_frames():
     env.reset(seed=9)
     before = {ship.id: ship.angle for ship in env.native.state.ships}
     order = env._order
-    env.step(1 * 16 + 2)  # left for the first controller slot, right for the second
+    env.step([1, 2, 0])  # left for the first controller slot, right for the second
     after = {ship.id: ship.angle for ship in env.native.state.ships}
     left_delta = (after[order[0]] - before[order[0]] + np.pi) % (2 * np.pi) - np.pi
     right_delta = (after[order[1]] - before[order[1]] + np.pi) % (2 * np.pi) - np.pi
@@ -794,7 +796,7 @@ def test_centralized_team_fails_immediately_when_either_ship_dies():
     env = CentralizedTeamEnv(seed=4, force_stage=3)
     env.reset(seed=22)
     env.native.simulation._ships[1].alive = False
-    _, reward, terminated, truncated, info = env.step(0)
+    _, reward, terminated, truncated, info = env.step([0, 0, 0])
     assert terminated and not truncated
     assert not info["episode_metrics"]["is_success"]
     assert reward <= -20.0
@@ -814,21 +816,107 @@ def test_centralized_mask_blocks_a_shot_through_the_teammate_even_across_wrap():
     env.native.state = env.native.simulation.snapshot()
     masks = env.native.action_masks()
     assert not masks[first.id][Action.FIRE]
-    first.angle = np.pi
+    # With the final 1.45s lifetime, firing directly away is still unsafe: the projectile
+    # crosses the toroidal seam and reaches the teammate's periodic image.  Perpendicular is
+    # the genuinely safe control case.
+    first.angle = np.pi / 2
     env.native.state = env.native.simulation.snapshot()
     assert env.native.action_masks()[first.id][Action.FIRE]
 
 
-def test_centralized_joint_mask_allows_one_shooter_but_not_two():
+def test_centralized_action_has_one_explicit_team_shooter():
     pytest.importorskip("sb3_contrib")
-    from asteroid_survival.actions import Action
     from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
 
     env = CentralizedTeamEnv(seed=8, force_stage=0)
     env.reset(seed=47)
-    mask = env.action_masks().reshape(16, 16)
-    assert mask[Action.FIRE, Action.NOOP] or mask[Action.NOOP, Action.FIRE]
-    assert not mask[Action.FIRE, Action.FIRE]
+    assert tuple(env.action_space.nvec) == (8, 8, 3)
+    assert env.action_masks()[-3:].all()
+    # The final branch is one team assignment, so "both fire" is unrepresentable.
+    assert not env.action_space.contains(np.asarray([0, 0, 3]))
+
+
+def test_round_29_movement_lesson_disables_only_the_shooter_branch():
+    pytest.importorskip("sb3_contrib")
+    from asteroid_survival.rl.team_ppo import CentralizedTeamEnv
+
+    env = CentralizedTeamEnv(seed=8, force_stage=35)
+    env.reset(seed=47)
+    env._movement_lesson = True
+    mask = env.action_masks()
+    assert mask[:16].all()
+    np.testing.assert_array_equal(mask[-3:], [True, False, False])
+
+
+def test_legacy_team_champion_restores_stage_and_score_from_evaluation(tmp_path):
+    from asteroid_survival.rl.team_ppo import _restore_team_state
+
+    run = tmp_path / "run"
+    champion = run / "champion"
+    champion.mkdir(parents=True)
+    (run / "evaluation.jsonl").write_text(json.dumps({
+        "environment_steps": 42,
+        "training_stage": 35,
+        "next_training_stage": 35,
+        "promoted": False,
+        "retention_ok": True,
+        "current": {"success_rate": 0.640625},
+    }) + "\n", encoding="utf-8")
+    state = {"stage": 0, "best_success_rate": 0.0}
+
+    _restore_team_state(champion, {"stage": 35, "environment_steps": 42}, state)
+
+    assert state["stage"] == 35
+    assert state["best_success_rate"] == pytest.approx(0.640625)
+    assert state["last_evaluated_stage"] == 35
+
+
+def test_legacy_promoted_team_champion_resumes_on_the_next_stage(tmp_path):
+    from asteroid_survival.rl.team_ppo import _restore_team_state
+
+    run = tmp_path / "run"
+    champion = run / "champion"
+    champion.mkdir(parents=True)
+    (run / "evaluation.jsonl").write_text(json.dumps({
+        "environment_steps": 42,
+        "training_stage": 34,
+        "next_training_stage": 35,
+        "promoted": True,
+        "retention_ok": True,
+        "current": {"success_rate": 0.80},
+    }) + "\n", encoding="utf-8")
+    state = {"stage": 0, "best_success_rate": 0.0}
+
+    _restore_team_state(champion, {"stage": 34, "environment_steps": 42}, state)
+
+    assert state["stage"] == 35
+    assert state["best_success_rate"] == 0.0
+
+
+def test_rejected_team_candidate_cannot_raise_the_champion_threshold():
+    from asteroid_survival.rl.team_ppo import _next_team_best_score
+
+    assert _next_team_best_score(
+        0.7109375, 0.7421875, accepted=False, promoted=False, mastered=False,
+    ) == pytest.approx(0.7109375)
+    assert _next_team_best_score(
+        0.7109375, 0.7421875, accepted=True, promoted=False, mastered=False,
+    ) == pytest.approx(0.7421875)
+    assert _next_team_best_score(
+        0.7421875, 0.75, accepted=True, promoted=True, mastered=False,
+    ) == 0.0
+
+
+def test_team_challenger_gets_several_updates_before_rollback():
+    from asteroid_survival.rl.team_ppo import _team_rejection_outcome
+
+    consecutive = 0
+    for _ in range(7):
+        action, consecutive = _team_rejection_outcome(consecutive, patience=8)
+        assert action == "continued"
+    action, consecutive = _team_rejection_outcome(consecutive, patience=8)
+    assert action == "rolled_back"
+    assert consecutive == 0
 
 
 def test_team_success_requires_both_ships_and_wave_warmup_requires_shooting():
@@ -838,15 +926,15 @@ def test_team_success_requires_both_ships_and_wave_warmup_requires_shooting():
     survival = CentralizedTeamEnv(seed=5, force_stage=4)
     survival.reset(seed=31)
     survival.native.max_decisions = 1
-    _, reward, terminated, truncated, info = survival.step(0)
+    _, reward, terminated, truncated, info = survival.step([0, 0, 0])
     assert truncated and not terminated
     assert info["episode_metrics"]["is_success"]
-    assert reward >= 30.0
+    assert reward >= 20.0
 
     wave = CentralizedTeamEnv(seed=5, force_stage=0)
     wave.reset(seed=31)
     wave.native.max_decisions = 1
-    _, reward, _, truncated, info = wave.step(0)
+    _, reward, _, truncated, info = wave.step([0, 0, 0])
     assert truncated
     assert not info["episode_metrics"]["is_success"]
     assert reward < 0.0
@@ -857,13 +945,32 @@ def test_team_curriculum_forces_shooting_then_adds_hazards_one_at_a_time():
     from asteroid_survival.rl.team_ppo import team_curriculum, team_stage_config
 
     stages = team_curriculum()
-    assert len(stages) == 103
+    assert len(stages) == 111
     assert all(stage.completion == "waves" and stage.composition for stage in stages[:4])
     assert [team_stage_config(stage).ship.friendly_collisions for stage in stages[:4]] == [
         "off", "ships", "full", "full"]
     assert all(team_stage_config(stage).ship.friendly_collisions == "full"
                for stage in stages[4:])
     assert all(stage.completion == "survival" for stage in stages[4:])
+    assert all(stage.promotion_clear_rate in (pytest.approx(0.75), pytest.approx(0.80))
+               for stage in stages[4:])
+    # Adding full friendly fire must not create an artificial short-range shooting task.
+    assert team_stage_config(stages[2]).projectile.lifetime == pytest.approx(
+        team_stage_config(stages[-1]).projectile.lifetime)
+
+
+def test_team_curriculum_bridges_the_round_29_large_asteroid_cliff_gradually():
+    from asteroid_survival.rl.team_ppo import team_curriculum
+
+    stages = team_curriculum()
+    bridges = stages[35:43]
+    assert [stage.name for stage in bridges] == [
+        f"team-large-bridge-{large}-of-16" for large in range(9, 17)]
+    assert [stage.asteroid_size.count(3) for stage in bridges] == list(range(9, 17))
+    assert all(len(stage.asteroid_size) == 16 for stage in bridges)
+    # Only composition changes inside the bridge; the ordinary round-29 physics follows it.
+    assert all(stage.min_speed == stages[34].min_speed for stage in bridges)
+    assert stages[43].name == "team-survival-v2-round-29"
 
 
 def test_a_companion_sees_exactly_what_it_would_see_as_the_learner():

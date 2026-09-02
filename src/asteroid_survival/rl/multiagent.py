@@ -26,8 +26,8 @@ from ..simulation import ASTEROID_RADII, Simulation
 from .curriculum import load_curriculum
 from .environment import (ASTEROID_FEATURES, GLOBAL_FEATURES, MOBILE_ACTIONS,
                           MOBILE_SHIP_FEATURES, PROJECTILE_FEATURES, TEAMMATE_FEATURES,
-                          RewardConfig, encode_observation, global_feature_count,
-                          history_offsets)
+                          RewardConfig, collision_prediction, encode_observation,
+                          global_feature_count, history_offsets)
 
 OBJECTIVE_FEATURES = 8
 TEAM_LEVEL_ROUNDS = (29, 35, 41, 47, 53, 59, 65, 71, 77, 83, 89, 96)
@@ -120,6 +120,8 @@ class MultiAgentAsteroidsEnv:
             "seed": seed, "alive_ship_time": 0.0, "ship_deaths": 0,
             "ship_collisions": 0, "friendly_fire": 0, "object_damage": 0,
             "asteroids_destroyed": 0, "reward": 0.0,
+            "safety_progress_reward": 0.0,
+            "mean_ship_speed": 0.0,
             "shots_fired": 0, "shots_missed": 0, "shots_resolved": 0,
             "is_success": False,
         }
@@ -193,6 +195,23 @@ class MultiAgentAsteroidsEnv:
             masks[ship.id] = mask
         return masks
 
+    def _team_safety_potential(self) -> float:
+        """Worst predicted asteroid clearance across the living team, bounded to [0, 1]."""
+        candidates = []
+        for ship in self.state.ships:
+            if not ship.alive:
+                continue
+            origin = Vec2(ship.x, ship.y)
+            for rock in self.state.asteroids:
+                delta = wrapped_delta(origin, Vec2(rock.x, rock.y),
+                                      self.state.width, self.state.height)
+                ttc, clearance, _, _ = collision_prediction(
+                    delta, rock.vx - ship.vx, rock.vy - ship.vy,
+                    rock.radius + self.config.ship.radius)
+                candidates.append(0.5 * min(1.0, ttc / 5.0)
+                                  + 0.5 * min(1.0, clearance / 150.0))
+        return min(candidates) if candidates else 1.0
+
     def _unsafe_fire(self, ship, action: Action, others: list) -> bool:
         """Whether firing on the action's first frame crosses a teammate's hit circle."""
         angle = ship.angle + action.turn * self.config.ship.turn_speed / self.config.arena.fps
@@ -222,6 +241,7 @@ class MultiAgentAsteroidsEnv:
             raise RuntimeError("call reset before step")
         before_alive = len(self.alive_ids)
         before_health = self.state.objective.health
+        safety_before = self._team_safety_potential()
         elapsed_start = self.state.elapsed
         events = []
         hit_value = 0.0
@@ -275,6 +295,12 @@ class MultiAgentAsteroidsEnv:
             reward -= self.reward_config.collision_penalty * collisions
             reward -= self.reward_config.friendly_fire_dealt_penalty * friendly
             reward -= self.reward_config.miss_penalty * shots_expired
+            if self.reward_config.safety_progress:
+                safety_after = (0.0 if newly_dead else self._team_safety_potential())
+                safety_reward = self.reward_config.safety_progress * (
+                    safety_after - safety_before)
+                reward += safety_reward
+                self.metrics["safety_progress_reward"] += safety_reward
             if self.config.objective.protect:
                 reward -= 10.0 * damage / self.initial_health
         timed_out = self.decisions >= self.max_decisions and not self.state.terminated
@@ -307,6 +333,10 @@ class MultiAgentAsteroidsEnv:
         self.metrics["shots_missed"] += shots_expired
         self.metrics["shots_resolved"] += shots_expired + sum(
             event.kind == "asteroid_shot" for event in events)
+        live_speeds = [math.hypot(ship.vx, ship.vy) for ship in self.state.ships if ship.alive]
+        decision_speed = sum(live_speeds) / len(live_speeds) if live_speeds else 0.0
+        self.metrics["mean_ship_speed"] += (
+            decision_speed - self.metrics["mean_ship_speed"]) / self.decisions
         if (terminated or truncated) and self.reward_config is not None:
             unresolved = max(0, self.metrics["shots_fired"] - self.metrics["shots_resolved"])
             reward -= self.reward_config.miss_penalty * unresolved

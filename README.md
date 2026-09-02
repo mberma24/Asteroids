@@ -5,20 +5,25 @@ JAX/Flax MuZero-style learner, and feed-forward/recurrent PPO research baselines
 
 ## End-state architecture
 
-The target is one shared learned policy controlling **1–8 ships** against boundary-spawned
-random nonlinear asteroids. Each ship acts from its local observation; a centralized team
-critic exists only during training. Object protection is a later, goal-conditioned phase
-that retains pure-survival practice.
+The current two-ship trainer uses one centralized policy controlling both ships
+simultaneously against boundary-spawned random nonlinear asteroids. It receives both local
+views and chooses one 8-way manoeuvre per ship plus one team firing assignment. A trajectory
+interlock rejects shots predicted to cross the teammate while full friendly-fire physics
+remain enabled. Training episodes are weighted 90% to the current stage and 10% to the
+immediately preceding stage; scripted controllers have zero training or promotion weight.
+Object protection and larger teams remain separate experimental phases.
 
-The path is staged: finish solo motion prediction with `survival-v2`, train genuine shared
-multi-agent PPO, then unlock protection. The old frozen-companion co-op task remains
-reproducible, but `train-mappo-team` is the cooperative trainer: every living ship contributes
-experience and an individual death does not end the team episode.
+The old frozen-companion co-op task and the 1–8 ship MAPPO experiment remain reproducible.
+For the concrete two-ship objective, use `train-team`: either death ends the episode, both
+ships must survive to clear, and the curriculum never contains an empty "learn not to fire"
+round.
 
 ```bash
 ./run.sh train-ppo-survival-v2 5000  # safe fork of the protected round-16 champion
 ./run.sh play survival-v2 29         # first entirely nonlinear round
 ./run.sh rounds survival-v2          # exact values for all 96 rounds
+./run.sh train-team 1000000          # centralized two-ship joint policy
+TEAM_STAGE=7 ./run.sh test-team models/TEAM/champion
 ./run.sh train-mappo-team 1000       # shared actor, centralized critic, teams 1-8
 PROTECT=1 INITIALIZE_FROM=models/TEAM/champion ./run.sh train-mappo-team 1000
 SHIPS=8 LEVEL=12 ./run.sh test-team models/MY-RUN/checkpoint_001000

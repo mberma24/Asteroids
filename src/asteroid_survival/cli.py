@@ -449,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     team_train.add_argument("--parallel-envs", type=int, default=8)
     team_train.add_argument("--eval-every", type=int, default=250_000)
     team_train.add_argument("--eval-episodes", type=int, default=128)
+    team_train.add_argument("--keep-checkpoints", type=int, default=3)
     team_train.add_argument("--resume", type=Path)
     team_train.add_argument("--seed", type=int, default=0)
     team_train.add_argument("--stop-when-mastered", action="store_true")
@@ -657,7 +658,8 @@ def main(argv: list[str] | None = None) -> int:
             args.output, steps=args.steps, seed=args.seed,
             parallel_envs=args.parallel_envs, eval_every=args.eval_every,
             eval_episodes=args.eval_episodes, device=args.device,
-            resume=args.resume, stop_when_mastered=args.stop_when_mastered)
+            resume=args.resume, stop_when_mastered=args.stop_when_mastered,
+            keep_checkpoints=args.keep_checkpoints)
         print(f"saved checkpoint: {checkpoint}")
         return 0
     if args.command == "evaluate-team":

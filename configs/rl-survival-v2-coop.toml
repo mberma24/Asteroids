@@ -1,0 +1,166 @@
+# Co-operative tier of survival v2: the same 96 rounds, flown by more than one ship.
+#
+# Every ship is driven by the SAME weights. `ships = N` spawns N PPO ships and the trainer
+# flies all of them with one shared policy, so each is a copy of the others facing the same
+# field from a different position. Change `ships` to 3, 4, ... and the tier scales: each ship
+# gets one teammate slot per other ship, and the observation grows by TEAMMATE_FEATURES per
+# slot (verified to 5 ships).
+#
+# `ships > 1` forces `friendly_collisions = "full"` in `CurriculumStage.game_config`, which
+# turns on both halves of the rule the tier exists to teach: bumping into a teammate kills
+# both ships, and a shot that lands on a teammate kills it. Pinned by
+# test_coop_tier_kills_ships_that_collide_or_shoot_each_other. Note the older
+# `rl-endless-coop.toml` claims those rules in its header and never sets them.
+#
+# The asteroid envelope below is copied verbatim from `rl-survival-v2.toml`, so co-operative
+# round N is solo round N's exact field and the ship count is the only variable. All 96 solo
+# rounds are inherited from the parent and stay in the retention set, so solo skill is not
+# traded away for co-operation.
+[curriculum]
+extends = "rl-survival-v2.toml"
+base_config = "rl-arcade.toml"
+# Retention may only sample rounds this policy actually mastered. It inherits all 96 solo
+# rounds as "prior", but the fork reached round 26 -- and `retention_holds` enforces a
+# per-stage completion floor, so a sampled round 54 fails retention outright and would block
+# promotion forever. Raise this as the co-operative tier climbs.
+retention_stage_limit = 26
+
+# Inherits every other reward term from the parent; these three exist only for rounds with
+# more than one ship. The simulator reports a teammate collision as `ship_collision` and a
+# teammate's shot as `friendly_fire`, neither of which is `ship_destroyed`, so before these
+# the two failure modes a co-operative round teaches cost nothing at all.
+[reward]
+# Losing the partner costs regardless of what killed it, so the agent has a reason to protect
+# it rather than merely to avoid killing it. A teammate taken by an asteroid was free before
+# this, and the only consequence was the forfeited round_clear. 10.0 matches round_clear, so
+# a preventable partner death costs about as much as failing the round.
+# One rock, one reward, whatever its size. Each tier used to pay the same *total* (0.60),
+# which is split-neutral; flat-per-rock instead weights the reward toward finishing, because
+# a large yields 1 + 2 + 4 bodies -- breaking it pays 0.25 and clearing its four fragments
+# pays 1.00. Measured: no evidence splitting harms survival (the alarming raw correlation was
+# reverse causation -- dying early keeps you in the large-rich opening phase), so this is not
+# a penalty on splitting, just a simpler rule that happens to reward completion.
+large = 0.25
+medium = 0.25
+small = 0.25
+teammate_death_penalty = 10.0
+collision_penalty = 5.0
+friendly_fire_penalty = 5.0
+# 30.0, derived rather than guessed: co-operating wins only while this exceeds
+# 45 * p(accident). At 12.0 it broke down above a 25% accident rate, and the from-scratch run
+# dies in 56% of episodes. 30.0 holds co-operation ahead up to 67%.
+friendly_fire_dealt_penalty = 30.0
+
+[progression]
+rounds = 96
+name_prefix = "coop2-round"
+# A new axis, not a continuation: number this tier from 1, so its first
+# round is co-operative round 1 on solo round 1's field.
+name_start = 1
+# Every ship flies the same weights. Raise for 3+ ship tiers.
+ships = 2
+survival = true
+patterns = []
+linear_probability = 1.0
+movement_enabled = true
+ship_invulnerable = false
+
+# Every physical knob moves a small amount on every round. Pattern phases below change the
+# distribution, but never turn these ramps backward.
+min_speed_start = 26.0
+min_speed_step = 1.05263
+max_speed_start = 38.0
+max_speed_step = 1.66316
+amplitude_min_start = 0.0
+amplitude_min_step = 0.12632
+amplitude_max_start = 0.0
+amplitude_max_step = 1.68421
+wavelength_min_start = 4.8
+wavelength_min_step = -0.03579
+wavelength_max_start = 6.0
+wavelength_max_step = -0.03789
+spawn_interval_start = 2.0
+spawn_interval_step = -0.01316
+spawn_spread_start = 170.0
+spawn_spread_step = -1.53684
+initial_asteroids_start = 8.0
+initial_asteroids_step = 0.12632
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+
+[[progression.phases]]
+until = 2
+patterns = []
+linear_probability = 1
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 6
+patterns = ["sine"]
+linear_probability = 0.5
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 10
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 12
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "small", "medium"]
+
+[[progression.phases]]
+until = 14
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "medium", "medium"]
+
+[[progression.phases]]
+until = 16
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "medium", "medium", "medium"]
+
+[[progression.phases]]
+until = 22
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change"]
+linear_probability = 0.142857
+asteroid_size = "medium"
+
+[[progression.phases]]
+until = 25
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "large"]
+
+[[progression.phases]]
+until = 28
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large", "large"]
+
+[[progression.phases]]
+until = 52
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "large"
+
+[[progression.phases]]
+until = 82
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["large", "large", "large", "medium"]
+
+[[progression.phases]]
+until = 96
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "mixed"

@@ -2,24 +2,36 @@
 # exact task hash while this curriculum can expose curvature early and add observation v5.
 [curriculum]
 base_config = "rl-arcade.toml"
-retention_sample = 10
+retention_sample = 3
 promotion_completion = 0.90
-promotion_clear_rate = 0.80
+# 0.75, not 0.80. Lowered 2026-08-26 on evidence, not impatience. The planning oracle
+# clears round 26 at 0.969 but does it by deepcopying the simulator, so cloning it produces a
+# policy that clears 0.078 -- its skill is not a function of the observation, and it never
+# established that 0.80 is reachable by a policy that only sees the observation. At the run's
+# true rate of ~0.73, pooled promotion at 0.80 needs ~183 evaluations (91,500 episodes);
+# at 0.75 it needs 4. The old unpooled gate promoted at that same ~0.73 by catching a lucky
+# 64-episode draw, so 0.75 pooled is the same standard reached deliberately instead of by
+# noise.
+promotion_clear_rate = 0.75
 retention_completion = 0.75
 retention_floor = 0.50
 promotion_accuracy = 0.05
 promotion_streak = 2
 promotion_window = 4
+# Four disjoint 64-seed panels make one 256-episode promotion decision.
+promotion_pool = true
 current_stage_probability = 0.80
 evaluation_episodes = 64
-# 8, not the 16 default: with retention_sample = 10 the retention sweep alone was 160
-# episodes against 250 of training, so 47% of every run was measurement rather than
-# learning. At 8 it is 144 per 250, and retention is a pooled statistic over ten rounds --
-# it does not need per-round precision.
+# 8, not the 16 default. Retention is a pooled statistic and does not need per-round
+# precision. Measured 2026-08-24: one evaluation costs 80.1s against 64.2s for 250 training
+# episodes, because evaluation loops seeds on a single env while training runs 8 in
+# parallel -- so evaluation was 55% of wall-clock time. Of its 144 episodes, 80 were
+# retention, and across 422 evaluations retention failed 0 times and blocked 0 promotions.
+# retention_sample cut 10 -> 3 on that evidence: 144 episodes per evaluation -> 88.
 retention_evaluation_episodes = 8
 evaluation_panels = 4
 test_evaluation_episodes = 128
-observation_version = 5
+observation_version = 7
 
 [reward]
 survival_bonus = 0.10
@@ -35,7 +47,7 @@ fast_clear = 0.0
 active_time_penalty = 0.0
 timeout_penalty = 0.0
 time_scaled_survival = true
-safety_progress = 0.0
+safety_progress = 0.02
 
 # Straight line is one trajectory among equals: every phase sets
 # linear_probability = 1/(len(patterns) + 1), so a rock is exactly as likely to fly

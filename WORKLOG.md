@@ -4,9 +4,133 @@ Running record of what has been changed and what was learned, so work can resume
 sessions without re-deriving it. Newest context at the top; the detail is chronological
 below.
 
-Last updated: 2026-08-26.
+Last updated: 2026-09-02.
 
 ---
+
+## 2026-09-02: the round-26 ceiling was clairvoyance, and the agent shoots itself
+
+Two measurements, both on round 26, seeds 10000+.
+
+**The blind oracle clears 0.812, not 0.969.** `scripts/planning_oracle.py --blind` reseeds
+the forked simulator's RNG on every rollout, so the planner keeps its 2s lookahead over the
+rocks already on the field (their paths are deterministic) but can no longer foresee where
+spawns land or what speed, pattern and phase each fragment is dealt. Same 16 candidates, same
+horizon, same 32 seeds: **26/32, completion 0.894** (`metrics/planning-oracle-blind.json`).
+Clairvoyance alone was worth ~16 points. The "26 points of headroom" conclusion of
+2026-08-25 was built on the clairvoyant number and is withdrawn: the reactive gap is roughly
+0.70 -> 0.81, and the 0.75 gate sits at the ceiling.
+
+**83% of the champion's deaths are self-inflicted.** `scripts/death_causes.py` traces the
+killing rock for the v7 champion over 96 seeds (clear 0.760, 23 deaths):
+
+```
+killer origin        fragment 19   initial 3   spawn 1
+parent shot by       the agent, all 19
+killer age at death  12 of 23 under 0.42s; 15 under 2s
+gap to ship          median 111px 1.0s before death, 58px at 0.53s, 33px at 0.27s
+rocks on field       median 24 of the 26 cap
+```
+
+Fragment direction is deterministic (+-0.45 rad off the parent's velocity) but the speed
+(60-92px/s medium, 71-107 small at this round), pattern and phase are drawn from the RNG at
+the moment of the shot. A point-blank shot on a medium or large rock is therefore a gamble
+on a hidden draw, and with ~0.4s to impact the ship cannot dodge the bad draws (0.4s of
+thrust moves it ~14px). The clairvoyant oracle wins that gamble by peeking; the blind one
+does not; the policy cannot.
+
+Note also that the field sits near the 26-rock cap at death, and `Simulation` suppresses
+fragments when a split would exceed the cap -- so shooting is paradoxically safest when the
+field is full.
+
+**What this closes.** The critic, exploration, learning rate, discount and value weight
+were all tested against a 0.97 target that does not exist for a reactive policy. Their nulls
+are consistent with a policy ~10 points under its ceiling on a task whose dominant death is
+decided by information it cannot see. The behavioural-cloning result ("the oracle's skill is
+not a function of the observation") is also confounded: its labels were the argmax of
+sixteen epsilon-random plans scored by one clairvoyant rollout each, so they carry both
+label noise and clairvoyance.
+
+**Levers that address the measured death mode**, in order of expected value:
+
+1. **Make fragment speed deterministic** (inherit the parent's speed times the size
+   multiplier, as the arcade original does). Removes the hidden draw entirely; the task
+   changes, so it is a fork via `INITIALIZE_FROM` on a new curriculum file, and the blind
+   oracle should be re-run on it first to set the new ceiling.
+2. **A "fire consequence" observation block**, appended after the v7 threat block so the v7
+   champion widens into it at zero weight: which rock a shot fired now would hit first, its
+   size and distance, and the worst-case clearance of its two fragments to the ship over the
+   next second. This is the oracle's lookahead expressed as a feature the policy can read.
+3. A penalty or interlock on point-blank shots at non-small rocks. Cheapest, crudest; the
+   death TD error already punishes these at -35 within three decisions, so the policy is
+   not short of signal, it is short of a way to tell a safe close shot from a fatal one.
+
+Not yet tried on this line and still open: the `ENCODER=set` extractor has never been
+trained (no checkpoint records it). It cannot inherit the MLP champion; the cheap route is
+to distil the champion into it on the champion's own states, then RL-finetune.
+
+Housekeeping: the VM working tree is five commits behind `main` with ~2,400 uncommitted
+lines that the Mac has already committed; sync it before the next run so the live code is
+the reviewed code.
+
+---
+
+## 2026-08-30 (team): let challengers learn through temporary regressions
+
+`team-large-bridge-v1` was healthy but effectively hill-climbing a fixed evaluation panel:
+every score below the champion immediately restored the old weights and multiplied the
+learning rate by 0.8. It reached the `1e-5` floor after 307 rejected candidates; stage 38's
+last-ten mean fell to 61.6% against a 75% gate. Team PPO now gives a challenger eight
+evaluation windows to improve before rolling back and reducing the rate. The dedicated
+champion remains untouched throughout.
+
+Centralized team training now applies the same three-checkpoint retention policy as solo
+training. The VM had accumulated 318 v1 checkpoints (3.8 GB); 316 obsolete copies were
+removed, leaving the champion and two newest recovery points (78 MB). `team-large-bridge-v2`
+forked from the v1 champion at stage 38, bootstrapped at the same 69.5%, reset optimizer
+state and counters, and restarted at `3e-4`.
+
+---
+
+## 2026-08-28 (team): replace the round-29 cliff with measured composition rungs
+
+`team-round29-monotonic-v1` was mechanically stable but not learning: after 13.3M
+environment steps it had accepted one candidate, rejected 137, reached the `1e-5` learning
+rate floor, and retained a 60.9% champion against the 75% gate. Friendly fire remained zero;
+the run was preserving competence rather than adding any.
+
+The earlier `team-movement-v3` was not a gradual movement curriculum. It disabled firing in
+about one third of full-difficulty round-29 episodes. Those episodes cleared 0%, averaged
+negative reward, and did not create faster movement, so the policy learned from an impossible
+auxiliary task and later collapsed.
+
+The real cliff is round 28 -> 29 asteroid composition: 50% large becomes 100% large at once.
+Fixed-seed calibration of the monotonic champion measured 76.6% success at 50% large, 70.3%
+at 56.25% and 62.5%, 67.2% at 68.75%, and roughly 53-61% at full round 29. Team curriculum
+v8 inserts eight round-28-physics stages, increasing the large share by exactly 1/16 from
+9/16 through 16/16, before returning to production round 29. The old round-29 index (35) is
+deliberately the first new bridge, so compatible checkpoints migrate onto the gentlest new
+rung.
+
+External team-checkpoint forks now reset rejected/accepted counters, the decayed learning
+rate, and optimizer moments; evaluate the source on the new stage before training; and bank
+that score as the new run's monotonic baseline. Same-run restarts still restore the exact
+optimizer and curriculum state.
+
+## 2026-08-26 (co-op): factorized team control and removal of a false curriculum cliff
+
+- Replaced the 256-category joint action with two 8-way manoeuvre branches and one 3-way
+  team firing assignment. This reduces the policy output from 256 opaque logits to 19
+  structured logits and makes simultaneous firing unrepresentable.
+- Added a centralized trajectory interlock: unsafe or cooldown-blocked shots become the
+  chosen movement without firing. Friendly-fire and ship-collision physics remain enabled.
+- Removed shortened projectile lifetimes from the bridge curriculum. The 0.5-second stage
+  had cut range by 66% and reduced the same checkpoint from 90.6% to 31.2% success.
+- Rebalanced dense rewards so hits outweigh expired shots, changed episode weighting to 90%
+  current/10% adjacent retention, and added a PPO KL limit.
+- Local held-out probe: 96.9% wave 1, 96.9% wave 2, 100% full-friendly-fire wave, 96.9%
+  mixed-size wave, then 96.9%, 87.5%, and 75–78% on the survival bridges by 246k steps.
+  Friendly fire was zero on the final seven reported panels.
 
 ## 2026-08-25 (co-op): centralized joint two-ship trainer
 

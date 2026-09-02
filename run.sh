@@ -134,7 +134,7 @@ for line in subprocess.check_output(["ps", "ax", "-o", "command="], text=True).s
         continue
     if "asteroid_survival" not in args:
         continue
-    if not any(name in args for name in ("train", "train-ppo", "train-mappo")):
+    if not any(name in args for name in ("train", "train-ppo", "train-mappo", "train-team")):
         continue
     try:
         print(args[args.index("--output") + 1])
@@ -161,7 +161,7 @@ for line in subprocess.check_output(["ps", "ax", "-o", "pid=,command="], text=Tr
         continue
     if "asteroid_survival" not in args:
         continue
-    if any(name in args for name in ("train", "train-ppo", "train-mappo")):
+    if any(name in args for name in ("train", "train-ppo", "train-mappo", "train-team")):
         matches.append(pid)
 print(" ".join(matches))
 ')"
@@ -342,6 +342,7 @@ cmd_train_ppo() {     # train PPO without tree search or replay
   [ -n "${PPO_GAMMA:-}" ] && args+=(--gamma "$PPO_GAMMA")
   [ -n "${PPO_TARGET_KL:-}" ] && args+=(--target-kl "$PPO_TARGET_KL")
   [ -n "${PPO_ENT_COEF:-}" ] && args+=(--ent-coef "$PPO_ENT_COEF")
+  [ -n "${PPO_VF_COEF:-}" ] && args+=(--vf-coef "$PPO_VF_COEF")
   [ -n "${PPO_ENTROPY_FLOOR:-}" ] && args+=(--entropy-floor "$PPO_ENTROPY_FLOOR")
   [ -n "${PPO_N_EPOCHS:-}" ] && args+=(--n-epochs "$PPO_N_EPOCHS")
   [ -n "${ENCODER:-}" ] && args+=(--encoder "$ENCODER")
@@ -485,21 +486,35 @@ cmd_train_mappo() {
   $PY -m asteroid_survival train-mappo "${args[@]}"
 }
 
+cmd_train_team() {
+  assert_no_other_trainer
+  local steps="${1:-1000000}" output="${OUTPUT:-models/team-ppo-$(date +%m%d-%H%M)}"
+  local args=(--output "$output" --steps "$steps" --parallel-envs "${PARALLEL_ENVS:-8}"
+              --eval-every "${EVAL_EVERY:-250000}" --eval-episodes "${EVAL_EPISODES:-128}"
+              --keep-checkpoints "${KEEP_CHECKPOINTS:-3}"
+              --seed "${SEED:-0}" --device "${PPO_DEVICE:-cpu}")
+  [ -n "${RESUME:-}" ] && args+=(--resume "$RESUME")
+  [ "${STOP_WHEN_MASTERED:-0}" = "1" ] && args+=(--stop-when-mastered)
+  $PY -m asteroid_survival train-team "${args[@]}"
+}
+
 cmd_test_team() {
   local checkpoint="${1:-${CHECKPOINT:-}}"
-  [ -n "$checkpoint" ] || { echo "pass a MAPPO checkpoint or set CHECKPOINT" >&2; exit 1; }
+  [ -n "$checkpoint" ] || { echo "pass a team checkpoint or set CHECKPOINT" >&2; exit 1; }
   local args=(--checkpoint "$checkpoint" --episodes "${EPISODES:-64}"
               --ships "${SHIPS:-8}" --level "${LEVEL:-12}" --seed "${SEED:-20000}")
   [ "${PROTECT:-0}" = "1" ] && args+=(--protect)
+  [ -n "${TEAM_STAGE:-}" ] && args+=(--stage "$TEAM_STAGE")
   $PY -m asteroid_survival evaluate-team "${args[@]}"
 }
 
 cmd_play_team() {
   local checkpoint="${1:-${CHECKPOINT:-}}"
-  [ -n "$checkpoint" ] || { echo "pass a MAPPO checkpoint or set CHECKPOINT" >&2; exit 1; }
+  [ -n "$checkpoint" ] || { echo "pass a team checkpoint or set CHECKPOINT" >&2; exit 1; }
   local args=(--checkpoint "$checkpoint" --ships "${SHIPS:-8}"
               --level "${LEVEL:-12}" --seed "${SEED:-7}")
   [ "${PROTECT:-0}" = "1" ] && args+=(--protect)
+  [ -n "${TEAM_STAGE:-}" ] && args+=(--stage "$TEAM_STAGE")
   $PY -m asteroid_survival play-team "${args[@]}"
 }
 
@@ -611,6 +626,58 @@ cmd_graph() {
   $PY -m asteroid_survival graph --run "$dir"
 }
 
+cmd_pull() {         # copy a run's champion down from the training box, to preview locally
+  # Training runs headless on the remote box; previewing needs a display, so the champion has
+  # to come here. Only the champion, its state and the evaluation log: training.jsonl is
+  # hundreds of megabytes of per-episode noise and is never needed locally.
+  local remote="${REMOTE:-oracle}"
+  local run="${1:-}"
+  if [ -z "$run" ]; then
+    run="$(ssh "$remote" 'ls -dt ~/Asteroids/models/*/ 2>/dev/null | head -1' \
+           | sed 's:/$::;s:.*/models/:models/:')"
+    [ -n "$run" ] || { echo "could not work out the newest run on $remote" >&2; exit 1; }
+    echo "newest run on $remote: $run"
+  fi
+  run="${run%/}"
+  mkdir -p "$run"
+  echo "pulling $run from $remote ..."
+  scp -q -r "$remote:~/Asteroids/$run/champion" "$run/" || {
+    echo "no champion in $run on $remote yet" >&2; exit 1; }
+  for extra in champion_state.json evaluation.jsonl curriculum_state.json; do
+    scp -q "$remote:~/Asteroids/$run/$extra" "$run/" 2>/dev/null || true
+  done
+  # The champion is the best-scoring checkpoint, which can be far behind the live policy --
+  # it only updates when a score improves, so after a promotion it can sit still for
+  # thousands of episodes. `latest` fetches the newest checkpoint instead, which is what to
+  # watch when the question is "how do they play now".
+  if [ "${2:-}" = "latest" ]; then
+    local newest
+    newest="$(ssh "$remote" "ls -d ~/Asteroids/$run/checkpoint_* 2>/dev/null | sort -t_ -k2 -n | tail -1")"
+    if [ -n "$newest" ]; then
+      scp -q -r "$remote:$newest" "$run/" && echo "  also pulled $(basename "$newest")"
+    fi
+  fi
+  $PY - "$run" <<'PYEOF'
+import json, sys
+from pathlib import Path
+run = Path(sys.argv[1])
+meta = json.loads((run / "champion" / "metadata.json").read_text(encoding="utf-8"))
+if meta.get("algorithm") == "centralized_team_ppo":
+    print(f"  {int(meta.get('environment_steps', 0)):,} decisions | "
+          f"centralized two-ship policy | stage {int(meta.get('stage', 0)) + 1}")
+    print(f"  watch champion: ./run.sh preview {run}")
+    checkpoints = sorted(run.glob("checkpoint_*"))
+    if checkpoints:
+        print(f"  watch latest:   ./run.sh preview {checkpoints[-1]}")
+    raise SystemExit
+layout = meta.get("observation_layout", {})
+ships = int(layout.get("max_teammates", 0)) + 1
+print(f"  episode {meta['episodes']:,} | {meta['environment_steps']:,} decisions "
+      f"| observation {meta['observation_size']} | {ships} ship{'s' if ships > 1 else ''}")
+print(f"  watch it:  ./run.sh preview {run}")
+PYEOF
+}
+
 cmd_preview() {      # watch the best held-out checkpoint in a run (or an exact checkpoint)
   local target="${1:-$(running_run)}"
   [ -n "$target" ] || target="$(ls -dt models/*/ 2>/dev/null | head -1)"
@@ -620,12 +687,39 @@ cmd_preview() {      # watch the best held-out checkpoint in a run (or an exact 
   local round="${2:-}"
   local seed="${3:-${SEED:-$RANDOM$RANDOM}}"
   echo "preview seed: $seed  (N = next seed, R = replay this one, Esc = quit)"
+  # Centralized team checkpoints use a different environment and action space from legacy
+  # solo/shared PPO. Dispatch them through play-team while keeping the familiar preview
+  # command working for a run directory or an exact checkpoint.
+  local team_checkpoint=""
+  if [ -f "$target/metadata.json" ]; then
+    team_checkpoint="$target"
+  elif [ -f "$target/champion/metadata.json" ]; then
+    team_checkpoint="$target/champion"
+  fi
+  if [ -n "$team_checkpoint" ] && $PY - "$team_checkpoint/metadata.json" <<'PYEOF'
+import json, sys
+raise SystemExit(0 if json.load(open(sys.argv[1])).get("algorithm") ==
+                 "centralized_team_ppo" else 1)
+PYEOF
+  then
+    SEED="$seed" cmd_play_team "$team_checkpoint"
+    return
+  fi
   $PY -m asteroid_survival preview "$target" --seed "$seed" ${round:+--stage "$round"}
 }
 
 cmd_status() {        # how is training going
   local dir="${1:-$(running_run)}"
-  [ -n "$dir" ] || dir="$(ls -dt models/*/ 2>/dev/null | head -1)"
+  # Newest directory, but skip runs that never produced a held-out evaluation. A run that
+  # was killed early leaves a directory behind and would otherwise become the default,
+  # reporting a corpse as the current state of training.
+  if [ -z "$dir" ]; then
+    local candidate
+    for candidate in $(ls -dt models/*/ 2>/dev/null); do
+      if [ -s "${candidate%/}/evaluation.jsonl" ]; then dir="$candidate"; break; fi
+    done
+    [ -n "$dir" ] || dir="$(ls -dt models/*/ 2>/dev/null | head -1)"
+  fi
   dir="${dir%/}"
   if [ -z "$dir" ] || [ ! -d "$dir" ]; then
     echo "No model directory found yet." >&2; exit 1
@@ -654,7 +748,8 @@ for raw in subprocess.check_output(
     except (ValueError, IndexError):
         continue
     if ("asteroid_survival" in args
-            and any(name in args for name in ("train", "train-ppo"))
+            and any(name in args for name in
+                    ("train", "train-ppo", "train-mappo", "train-team"))
             and Path(output).resolve() == target):
         print(pid)
         break
@@ -665,6 +760,20 @@ PYEOF
   else
     echo "training: not running"
   fi
+  # Data-collection jobs are not trainers, so the check above cannot see them and the box
+  # reads as idle when it is in fact saturated. Report them explicitly.
+  local oracle_pid
+  # `|| true`: pgrep exits 1 when nothing matches, and under `set -euo pipefail` that
+  # aborts the whole status command -- which is exactly when you most want it to print.
+  oracle_pid="$(pgrep -f "planning_oracle.py" 2>/dev/null | head -1 || true)"
+  if [ -n "$oracle_pid" ]; then
+    # Newest log wins: several of these accumulate and a finished run's last line would
+    # otherwise be reported as the live job's progress.
+    local oracle_log oracle_progress=""
+    oracle_log="$(ls -t oracle-*.log 2>/dev/null | head -1)"
+    [ -n "$oracle_log" ] && oracle_progress="$(grep -E "episodes|clear" "$oracle_log" | tail -1)"
+    echo "planning oracle: RUNNING (pid $oracle_pid)${oracle_progress:+ | ${oracle_progress# }}"
+  fi
   if [ -f "$dir/training.jsonl" ]; then
     local progress
     progress="$($PY - "$dir/training.jsonl" <<'PYEOF'
@@ -672,13 +781,18 @@ import json, sys
 from pathlib import Path
 lines = Path(sys.argv[1]).read_text().splitlines()
 latest = json.loads(lines[-1]) if lines else {}
-detail = f"{latest.get('episode', 0)} total ({len(lines)} recorded in this directory)"
+if "episode" in latest:
+    detail = f"{latest['episode']} total ({len(lines)} recorded in this directory)"
+else:
+    detail = f"{len(lines)} total"
 if latest.get("environment_steps") is not None:
     detail += f" | {int(latest['environment_steps']):,} environment decisions"
 print(detail)
 PYEOF
 )"
     echo "episodes: $progress"
+  else
+    echo "episodes: none yet (a fresh run writes its first block at 250 episodes)"
   fi
   $PY - "$dir" <<'PYEOF'
 import json, sys
@@ -696,15 +810,34 @@ if checkpoints:
             label, metadata.get("device", "unknown"),
             float(metadata.get("decisions_per_second", 0.0))))
 PYEOF
-  if [ -f "$dir/evaluation.jsonl" ]; then
+  if [ ! -s "$dir/evaluation.jsonl" ]; then
+    local every
+    every="$(ps -eo command= 2>/dev/null | sed -n "s/.*--eval-every \([0-9]*\).*/\1/p" | head -1 || true)"
+    echo "held-out evaluations: none yet${every:+ (first at episode $every)}"
+  fi
+  if [ -s "$dir/evaluation.jsonl" ]; then
     if [ -f "$dir/champion_state.json" ]; then
-      $PY - "$dir/champion_state.json" <<'PYEOF'
+      $PY - "$dir/champion_state.json" "$dir/evaluation.jsonl" <<'PYEOF'
 import json, sys
+from pathlib import Path
 s = json.load(open(sys.argv[1]))
 clear = s.get("clear_rate")
 clear_detail = "" if clear is None else " | clear {:.1%}".format(clear)
-print("champion: episode {} | stage {} | completion {:.1%}{} | accuracy {:.3f} | recoveries {} | retention alerts {}/{}".format(
-    s.get("episode", 0), int(s.get("training_stage", 0)) + 1,
+# The round's name, not its global index. A tier that extends another starts at the parent's
+# length, so co-operative round 1 has index 96 and printing "stage 97" looks like a bug.
+stage_index = int(s.get("training_stage", 0))
+label = str(stage_index + 1)
+try:
+    for line in reversed(Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()):
+        record = json.loads(line)
+        name = record["stages"][stage_index].get("name")
+        if name:
+            label = name
+        break
+except (OSError, ValueError, IndexError, KeyError):
+    pass
+print("champion: episode {} | {} | completion {:.1%}{} | accuracy {:.3f} | recoveries {} | retention alerts {}/{}".format(
+    s.get("episode", 0), label,
     s.get("completion_rate", 0), clear_detail, s.get("accuracy", 0), s.get("recoveries", 0),
     s.get("retention_failures", 0), s.get("patience", 4)))
 print("champion restorations: {}".format(s.get("restorations", 0)))
@@ -712,20 +845,132 @@ if s.get("rollbacks", 0):
     print("historical destructive rollbacks (disabled now): {}".format(s["rollbacks"]))
 PYEOF
     fi
+    # The promotion decision, which is pooled across a window of evaluations and is not
+    # visible in any single one of them. `streak` stopped meaning "passes in a row" when
+    # pooling went in -- it counts evaluations banked in the window -- so it is reported as
+    # a window fill level, never as progress toward the bar.
+    $PY - "$dir/evaluation.jsonl" <<'PYEOF'
+import json, sys
+from pathlib import Path
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+record = None
+for line in reversed(lines):
+    try:
+        record = json.loads(line)
+        break
+    except ValueError:
+        continue
+if record:
+    pool = record.get("promotion_pool")
+    clear_target = record.get("promotion_clear_rate_target")
+    completion_target = record.get("promotion_completion_target")
+    if pool:
+        clear = pool.get("clear_rate", 0.0)
+        completion = pool.get("completion_rate", 0.0)
+        blockers = []
+        if clear_target is not None and clear < clear_target:
+            blockers.append("clear {:+.1f} pts".format((clear - clear_target) * 100))
+        if completion_target is not None and completion < completion_target:
+            blockers.append("completion {:+.1f} pts".format(
+                (completion - completion_target) * 100))
+        line = "promotion: pooled over {}/{} evaluations ({} episodes)".format(
+            pool.get("evaluations", 0), pool.get("required_evaluations", 0),
+            pool.get("episodes", 0))
+        print(line)
+        print("  clear      {:6.1%}{}".format(
+            clear, "" if clear_target is None else " of {:.0%}".format(clear_target)))
+        print("  completion {:6.1%}{}".format(
+            completion,
+            "" if completion_target is None else " of {:.0%}".format(completion_target)))
+        print("  " + ("SHORT BY " + ", ".join(blockers) if blockers
+                      else "both gates met - promotes on the next evaluation"))
+    elif record.get("current"):
+        current = record["current"]
+        success = float(current.get("success_rate", 0.0))
+        target = float(record.get("target", 0.0))
+        state = "PROMOTED" if record.get("promoted") else "waiting"
+        candidate = record.get("candidate_action")
+        detail = "" if not candidate else " | candidate {} | best {:.1%} | lr {:.2g}".format(
+            candidate, record.get("best_success_rate", success),
+            record.get("effective_learning_rate", 0.0))
+        print("promotion: {} | success {:.1%} of {:.0%} | retention {}{}".format(
+            state, success, target,
+            "passed" if record.get("retention_ok", True) else "failed", detail))
+    else:
+        streak = record.get("promotion_streak", 0)
+        print("promotion: not pooled | streak {} (single-evaluation gate)".format(streak))
+PYEOF
+    # The critic, which is what the current experiments turn on. A value function that
+    # explains less than half the return variance makes every advantage estimate noisy.
+    if [ -f "$dir/ppo_updates.jsonl" ]; then
+      $PY - "$dir/ppo_updates.jsonl" <<'PYEOF'
+import json, statistics, sys
+from pathlib import Path
+rows = []
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()[-200:]:
+    try:
+        rows.append(json.loads(line))
+    except ValueError:
+        continue
+if rows:
+    def mean(name, default=None):
+        values = [float(r[name]) for r in rows if name in r]
+        return statistics.fmean(values) if values else default
+    entropy = mean("entropy")
+    if entropy is None:
+        loss = mean("entropy_loss")
+        entropy = None if loss is None else -loss
+    parts = ["explained_variance {:.3f}".format(mean("explained_variance", 0.0))]
+    parts.append("value_loss {:.2f}".format(mean("value_loss", 0.0)))
+    if entropy is not None:
+        parts.append("entropy {:.3f} nats".format(entropy))
+    parts.append("approx_kl {:.4f}".format(mean("approx_kl", 0.0)))
+    print("critic/policy (last {} updates): {}".format(len(rows), " | ".join(parts)))
+PYEOF
+    fi
     echo "-- held-out evaluations (the number that matters) --"
     tail -5 "$dir/evaluation.jsonl" | $PY -c '
 import json, sys
 for line in sys.stdin:
     r = json.loads(line)
-    episode = r["episode"]
+    if "current" in r:
+        s = r["current"]
+        steps = int(r.get("environment_steps", 0))
+        line = "  step {:>9,}  {:<28} success {:6.1%} of {:.0%}".format(
+            steps, s.get("name", "team stage"), s.get("success_rate", 0.0),
+            r.get("target", 0.0))
+        line += "  kills {:5.2f}  friendly fire {:.3f}".format(
+            s.get("mean_asteroids_destroyed", 0.0), s.get("mean_friendly_fire", 0.0))
+        if r.get("promoted"):
+            line += "  <- PROMOTED"
+        elif r.get("candidate_action"):
+            line += "  <- {} (best {:.1%})".format(
+                r["candidate_action"].upper(), r.get("best_success_rate", 0.0))
+        print(line)
+        continue
+    episode = r.get("episode", 0)
     if "stages" in r:
         index = min(r.get("training_stage", 0), len(r["stages"]) - 1)
         s = r["stages"][index]
+        completion_target = r.get("promotion_completion_target")
+        clear_target = r.get("promotion_clear_rate_target")
+        label = s.get("name") or "round {}".format(index + 1)
+        line = "  ep {:>6}  {:<18} completion {:6.1%}{}".format(
+            episode, label, s["completion_rate"],
+            "" if completion_target is None else " of {:.0%}".format(completion_target))
         clear = s.get("clear_rate")
-        clear_detail = "" if clear is None else "  clear {:6.1%}".format(clear)
-        print("  ep {:>6}  stage {}  completion {:6.1%}{}  waves {:4.1f}  accuracy {:.3f}".format(
-              episode, index + 1, s["completion_rate"], clear_detail,
-              s["mean_wave"], s["mean_accuracy"]))
+        if clear is not None:
+            line += "  clear {:6.1%}{}".format(
+                clear, "" if clear_target is None else " of {:.0%}".format(clear_target))
+        if s.get("mean_survival_time") is not None:
+            line += "  survival {:5.1f}s".format(s["mean_survival_time"])
+        line += "  accuracy {:.3f}".format(s["mean_accuracy"])
+        pool = r.get("promotion_pool")
+        if pool:
+            line += "  pool {:.1%}".format(pool.get("clear_rate", 0.0))
+        if r.get("promoted"):
+            line += "  <- PROMOTED"
+        print(line)
         continue
     survival = r["mean_survival_time"]
     kills = r["mean_asteroids_destroyed"]
@@ -767,7 +1012,8 @@ def trainer_alive():
         except (ValueError, IndexError):
             continue
         if ("asteroid_survival" in args
-                and any(name in args for name in ("train", "train-ppo"))
+                and any(name in args for name in
+                        ("train", "train-ppo", "train-mappo", "train-team"))
                 and Path(output).resolve() == run):
             return True
     return False
@@ -786,11 +1032,23 @@ def records():
 
 
 def describe(record, previous):
+    if record.get("current"):
+        stage = record["current"]
+        line = (f"  step {record.get('environment_steps', 0):>9,}  "
+                f"{stage.get('name', 'team stage'):<28}"
+                f"  success {stage.get('success_rate', 0.0):6.1%}"
+                f" of {record.get('target', 0.0):.0%}"
+                f"  kills {stage.get('mean_asteroids_destroyed', 0.0):5.2f}"
+                f"  friendly fire {stage.get('mean_friendly_fire', 0.0):.3f}")
+        if record.get("promoted"):
+            line += "  <- PROMOTED"
+        return line
     stage_index = min(record.get("training_stage", 0), len(record.get("stages", [])) - 1)
     stage = record["stages"][stage_index] if record.get("stages") else {}
     target = record.get("promotion_completion_target")
     completion = stage.get("completion_rate")
-    line = f"  ep {record.get('episode', 0):>6}  round {stage_index + 1:>3}"
+    label = stage.get("name") or f"round {stage_index + 1}"
+    line = f"  ep {record.get('episode', 0):>6}  {label:<18}"
     if completion is not None:
         gap = "" if target is None else f" of {target:.0%}"
         line += f"  completion {completion:6.1%}{gap}"
@@ -804,7 +1062,16 @@ def describe(record, previous):
     if stage.get("mean_accuracy") is not None:
         line += f"  accuracy {stage['mean_accuracy']:.3f}"
     streak = record.get("promotion_streak")
-    if streak:
+    pool = record.get("promotion_pool")
+    if pool:
+        # The pooled rates are the promotion decision; the per-evaluation numbers above are
+        # a single noisy draw and cannot promote on their own.
+        line += (f"  pool {pool.get('evaluations', 0)}/"
+                 f"{pool.get('required_evaluations', 0)}"
+                 f" [{pool.get('clear_rate', 0.0):.1%} clear,"
+                 f" {pool.get('completion_rate', 0.0):.1%} completion,"
+                 f" {pool.get('episodes', 0)} eps]")
+    elif streak:
         line += f"  streak {streak}"
     marks = []
     if record.get("promoted"):
@@ -869,6 +1136,7 @@ Play
   ./run.sh watch [mode] [N]     agents only, scored on fixed seeds
   ./run.sh compare [mode] [N]   you and the agents on the same seeds, scored
   ./run.sh versus [mode] [N] [runs]  score several models, each alone in its own game
+  ./run.sh pull [dir] [latest]  copy a run's champion (or newest checkpoint) down to here
   ./run.sh preview [dir] [N]    watch a run's champion, optionally on round N
   ./run.sh patterns [name]      watch trajectory shapes with trails (omit name for all)
 
@@ -885,6 +1153,7 @@ Train
   ./run.sh train-ppo-endless [N]    transfer FF-PPO into the survival ladder
   ./run.sh train-ppo-coop [N]       transfer a solo model into the two-ship tier
   ./run.sh train-ppo-survival-v2 [N] fork a solo model into survival v2 (rung measured, CPU)
+  ./run.sh train-team [STEPS]        centralized joint policy for the two-ship objective
   ./run.sh train-mappo-team [N]      shared policy, centralized team critic, 1-8 ships
   PROTECT=1 ./run.sh train-mappo-team [N]  gated object-protection variant
   ./run.sh ppo-screen [N]       PPO then LSTM-PPO sequentially on one seed
@@ -923,7 +1192,9 @@ Overrides (environment variables)
   START_STAGE=5     one-based curriculum stage for a continuation
   EVAL_EVERY=500    held-out evaluation interval
   PPO_DEVICE=cpu    override PPO device (auto, cpu, or mps)
+  TEAM_STAGE=7      one-based stage for test-team/play-team on a centralized checkpoint
   PPO_ENT_COEF=0.0025 entropy bonus for PPO, including initialized/resumed runs
+  PPO_VF_COEF=1.0   value-loss coefficient for PPO, including resumed runs
   PPO_ENTROPY_FLOOR=0.8 hold PPO entropy near N nats by adapting the entropy bonus
   FOLLOW_EVERY=15   seconds between `follow` polls
   FORK_SEEDS=24     seeds per probe when measuring a fork rung
@@ -980,6 +1251,7 @@ case "$command" in
   train-ppo-endless)   cmd_train_ppo_endless "${1:-15000}" ;;
   train-ppo-survival-v2) cmd_train_ppo_survival_v2 "${1:-5000}" ;;
   train-ppo-coop)      cmd_train_ppo_coop "${1:-15000}" ;;
+  train-team)          cmd_train_team "${1:-1000000}" ;;
   train-mappo-team)    cmd_train_mappo "${1:-1000}" ;;
   test-team)           cmd_test_team "$@" ;;
   play-team)           cmd_play_team "$@" ;;
@@ -992,6 +1264,7 @@ case "$command" in
   follow)      cmd_follow "$@" ;;
   baseline)    cmd_baseline "$@" ;;
   graph)       cmd_graph "$@" ;;
+  pull)        cmd_pull "$@" ;;
   preview)     cmd_preview "$@" ;;
   test)        cmd_test "$@" ;;
   -h|--help|help) usage ;;

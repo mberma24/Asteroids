@@ -42,6 +42,13 @@ if [ -n "$checkpoint" ]; then
     OUTPUT="$RUN" RESUME="$checkpoint" ./run.sh train-ppo "$EPISODES"
 fi
 
+# A scratch run must not silently inherit: SOURCE falls back to models/source/champion,
+# which exists on this box, so "no INITIALIZE_FROM" is not the same as "from scratch".
+if [ "${FROM_SCRATCH:-0}" = "1" ]; then
+  echo "== starting $CURRICULUM from scratch at stage ${START_STAGE:-1} =="
+  exec env -u INITIALIZE_FROM OUTPUT="$RUN" ./run.sh train-ppo "$EPISODES"
+fi
+
 if [ -d "$SOURCE" ]; then
   if [ "$CURRICULUM" = "configs/rl-survival-v2.toml" ] && [ -z "${START_STAGE:-}" ]; then
     echo "== forking from $SOURCE (rung is measured) =="
