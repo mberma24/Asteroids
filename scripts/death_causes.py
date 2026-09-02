@@ -1,4 +1,7 @@
-"""How does the champion die on round 26? Age and origin of the killing rock."""
+"""How does the champion die on round 26? Age and origin of the killing rock.
+
+Usage: python scripts/death_causes.py CHECKPOINT SEEDS WORKERS [CURRICULUM] [OUTPUT]
+"""
 import json, math, sys, statistics
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -11,9 +14,10 @@ LAYOUT = {"history_frames": 8, "history_long_frames": 8, "history_long_stride": 
           "max_projectiles": 8, "version": 7}
 CKPT = sys.argv[1]
 STAGE = 25
+CURRICULUM = sys.argv[4] if len(sys.argv) > 4 else "configs/rl-survival-v2.toml"
 
 def run(seed):
-    spec = load_curriculum("configs/rl-survival-v2.toml")
+    spec = load_curriculum(CURRICULUM)
     env = _stage_env(spec, STAGE, LAYOUT)
     ctl = PPOController(CKPT)
     obs, _ = env.reset(seed)
@@ -88,4 +92,4 @@ if __name__ == "__main__":
               f"median gap {statistics.median(r[f'dist_{back}'] for r in vis) if vis else float('nan'):.0f}px, "
               f"median nearest-rank {statistics.median(r[f'rank_{back}'] for r in vis) if vis else float('nan')}")
     print("rocks at death median", statistics.median(r["rocks_at_death"] for r in deaths))
-    json.dump(rows, open("metrics/death-causes.json", "w"), indent=1)
+    json.dump(rows, open(sys.argv[5] if len(sys.argv) > 5 else "metrics/death-causes.json", "w"), indent=1)
