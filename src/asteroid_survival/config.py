@@ -117,6 +117,18 @@ class AsteroidConfig:
     """Fresh-spawn heading: ``aimed``, ``spread``, or uniformly ``random``."""
     medium_speed_multiplier: float = 1.0
     small_speed_multiplier: float = 1.2
+    fragment_motion: str = "random"
+    """How a split fragment moves: ``random`` draws speed, pattern, waviness and phase
+    afresh from the RNG at the moment of the shot; ``inherit`` keeps the parent's, with
+    speed rescaled by the size multipliers, as the arcade original does.
+
+    Measured 2026-09-02 on round 26 of the survival-v2 ladder: 19 of the champion's 23
+    deaths were fragments of a rock it had itself just shot, most under 0.42s old. With
+    ``random`` a point-blank shot at a medium or large rock is a gamble on a hidden draw the
+    ship has no time to react to; a planner that could peek at that draw cleared 0.969 where
+    one that could not cleared 0.812. ``inherit`` makes every fragment's path a function of
+    what was already on screen, so there are no hidden-information deaths to learn around.
+    """
     # An in-episode difficulty ramp. Every episode starts at the *_start values and reaches
     # the configured values after ramp_seconds. Any start left unset holds that field
     # constant, so a config with no starts behaves exactly as it did before.
@@ -265,6 +277,8 @@ class GameConfig:
             raise ValueError("friendly_collisions must be off, ships, or full")
         if self.ship.spawn_radius < 0:
             raise ValueError("ship spawn_radius cannot be negative")
+        if self.asteroid.fragment_motion not in {"random", "inherit"}:
+            raise ValueError("fragment_motion must be random or inherit")
         if self.asteroid.spawn_mode not in {"interval", "wave"}:
             raise ValueError("spawn_mode must be interval or wave")
         if self.asteroid.wave_size < 1 or self.asteroid.wave_size_max < 1:

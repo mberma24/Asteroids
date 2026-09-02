@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from .actions import Action
-from .config import GameConfig
+from .config import AsteroidConfig, GameConfig
 from .math2d import Vec2, from_angle, wrap, wrapped_distance
 from .patterns import trajectory
 from .state import (AsteroidSnapshot, GameEvent, ObjectiveSnapshot, ProjectileSnapshot,
@@ -318,8 +318,14 @@ class Simulation:
             self.truncated = True
             self.terminal_reason = TerminalReason.WAVES_CLEARED
 
+    @staticmethod
+    def _size_multiplier(cfg: AsteroidConfig, size: int) -> float:
+        return (cfg.small_speed_multiplier if size == 1 else
+                cfg.medium_speed_multiplier if size == 2 else 1.0)
+
     def _spawn_asteroid(self, *, pos: Vec2 | None = None, size: int | None = None,
-                        direction: Vec2 | None = None) -> _Asteroid:
+                        direction: Vec2 | None = None,
+                        parent: _Asteroid | None = None) -> _Asteroid:
         cfg, width, height = self.config.asteroid, self.config.arena.width, self.config.arena.height
         fresh_spawn = pos is None
         if pos is None:
@@ -353,8 +359,16 @@ class Simulation:
             spawn_size = self._rng.choice(cfg.spawn_size)
         else:
             spawn_size = cfg.spawn_size or self._rng.choice((1, 2, 3))
-        multiplier = (cfg.small_speed_multiplier if spawn_size == 1 else
-                      cfg.medium_speed_multiplier if spawn_size == 2 else 1.0)
+        multiplier = self._size_multiplier(cfg, spawn_size)
+        if parent is not None and cfg.fragment_motion == "inherit":
+            # A fragment's whole motion follows from its parent's, which the player has
+            # been watching: same pattern, swing and phase, and the parent's speed rescaled
+            # by the size multipliers. Nothing about it is drawn at the moment of the shot.
+            speed = parent.speed / self._size_multiplier(cfg, parent.size) * multiplier
+            return _Asteroid(self._new_id(), pos, direction.normalized(), speed,
+                             parent.pattern, parent.amplitude, parent.frequency,
+                             parent.phase, 0.0, spawn_size, pos,
+                             direction.normalized() * speed)
         speed = self._rng.uniform(difficulty.min_speed, difficulty.max_speed) * multiplier
         pattern = self._pattern()
         period = self._rng.uniform(difficulty.wavelength_min,
@@ -395,7 +409,8 @@ class Simulation:
                                 >= self._difficulty().active_cap):
                             break
                         base_angle = math.atan2(a.vel.y, a.vel.x) + sign * 0.45
-                        child = self._spawn_asteroid(pos=a.pos, size=a.size - 1, direction=from_angle(base_angle))
+                        child = self._spawn_asteroid(pos=a.pos, size=a.size - 1,
+                                                     direction=from_angle(base_angle), parent=a)
                         children.append(child)
                         events.append(GameEvent("asteroid_split", self.step_count, str(child.id), str(a.id)))
                 break

@@ -1,0 +1,16 @@
+# Survival v2 with deterministic fragments. Every stage, gate and reward is inherited from
+# rl-survival-v2.toml unchanged; the only difference is the base game config, which sets
+# `fragment_motion = "inherit"` so a split rock's pieces keep the parent's speed (rescaled by
+# size), pattern, swing and phase instead of drawing them afresh.
+#
+# Why (2026-09-02): 19 of the v7 champion's 23 deaths on round 26 were fragments of a rock it
+# had itself just shot, most under 0.42s old. Their speed and path were decided by the RNG at
+# the moment of the shot, so no reactive policy could tell a safe close shot from a fatal
+# one. The planning oracle cleared 0.969 when it could peek at that draw and 0.812 when it
+# could not. This ladder removes the draw rather than asking the policy to learn around it.
+#
+# It is a different task, so checkpoints from rl-survival-v2.toml fork in via
+# INITIALIZE_FROM (which does not check the task hash) rather than --resume (which does).
+[curriculum]
+extends = "rl-survival-v2.toml"
+base_config = "rl-arcade-detfrag.toml"
