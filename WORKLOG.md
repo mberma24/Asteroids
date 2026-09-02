@@ -30,6 +30,11 @@ each such shot is a function of what it can see.
 26, v11's settings (lr 5e-5, ent 0.0025, KL 0.02, pooled 0.75 gate). v11 was stopped at
 12,500 episodes, pooled 0.688 -- healthy, cheap and going nowhere a 0.81 ceiling allows.
 
+**v12 promoted off round 26 at episode 3,000**, pooled clear 0.777 over 256 episodes (panels
+0.703, 0.719, 0.859, 0.781), the first promotion past round 26 by any run since the ladder
+was built. Early, and 0.777 against a 0.75 bar is not a large margin, so treat it as a
+first sign rather than a result; round 27 opened at 0.734.
+
 What to look for: `death_causes.py` on the v12 champion should show the fragment share of
 deaths falling and killer age at death rising. If the clear rate is still ~0.70 after
 ~15,000 episodes with the fragment share unchanged, the policy is not exploiting the
