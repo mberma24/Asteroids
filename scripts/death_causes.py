@@ -2,7 +2,7 @@
 
 Usage: python scripts/death_causes.py CHECKPOINT SEEDS WORKERS [CURRICULUM] [OUTPUT]
 """
-import json, math, sys, statistics
+import json, math, os, sys, statistics
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 sys.path.insert(0, "src")
@@ -10,9 +10,12 @@ from asteroid_survival.rl.curriculum import load_curriculum
 from asteroid_survival.rl.ppo import _stage_env, PPOController
 from asteroid_survival.math2d import Vec2, wrapped_delta
 
-LAYOUT = {"history_frames": 8, "history_long_frames": 8, "history_long_stride": 8,
-          "max_projectiles": 8, "version": 7}
 CKPT = sys.argv[1]
+_META = json.load(open(os.path.join(CKPT, "metadata.json")))
+LAYOUT = dict(_META.get("observation_layout") or {})
+for _key, _default in (("history_frames", 8), ("history_long_frames", 8),
+                       ("history_long_stride", 8), ("max_projectiles", 8), ("version", 7)):
+    LAYOUT.setdefault(_key, _default)
 STAGE = 25
 CURRICULUM = sys.argv[4] if len(sys.argv) > 4 else "configs/rl-survival-v2.toml"
 

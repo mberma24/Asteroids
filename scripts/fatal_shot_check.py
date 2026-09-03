@@ -16,9 +16,16 @@ sys.path.insert(0, "src")
 from asteroid_survival.rl.curriculum import load_curriculum
 from asteroid_survival.rl.ppo import _stage_env, PPOController
 
-LAYOUT = {"history_frames": 8, "history_long_frames": 8, "history_long_stride": 8,
-          "max_projectiles": 8, "version": 7}
 CKPT = sys.argv[1]
+# Read the layout from the checkpoint rather than assuming one: a v8 policy is 10 inputs
+# wider than a v7 one and will not load into the wrong environment.
+_META = json.load(open(os.path.join(CKPT, "metadata.json")))
+LAYOUT = dict(_META.get("observation_layout") or {})
+LAYOUT.setdefault("history_frames", 8)
+LAYOUT.setdefault("history_long_frames", 8)
+LAYOUT.setdefault("history_long_stride", 8)
+LAYOUT.setdefault("max_projectiles", 8)
+LAYOUT.setdefault("version", 7)
 CURRICULUM = sys.argv[4] if len(sys.argv) > 4 else "configs/rl-survival-v2-detfrag.toml"
 STAGE = 25
 
