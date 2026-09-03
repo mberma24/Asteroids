@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from .actions import Action
-from .config import AsteroidConfig, GameConfig
+from .config import PATTERN_REACH, PATTERN_REACH_CAP, AsteroidConfig, GameConfig
 from .math2d import Vec2, from_angle, wrap, wrapped_delta, wrapped_distance
 from .patterns import trajectory
 from .state import (AsteroidSnapshot, GameEvent, ObjectiveSnapshot, ProjectileSnapshot,
@@ -523,6 +523,13 @@ class Simulation:
                                    max(difficulty.wavelength_min, difficulty.wavelength_max))
         amplitude_max = max(cfg.amplitude_min, difficulty.amplitude_max)
         amplitude = self._rng.uniform(cfg.amplitude_min, amplitude_max)
+        reach = PATTERN_REACH.get(pattern, 1.0)
+        if reach != 1.0:
+            # A pattern that exists to be chaotic needs more room than one meant to read as a
+            # wave, and the round's amplitude is a single budget shared by both. Capped
+            # against the arena so a late round does not sweep the whole field.
+            amplitude = min(amplitude * reach,
+                            PATTERN_REACH_CAP * self.config.arena.width)
         # One scale for all three, so a varied rock reads as coherently sluggish -- slower,
         # swinging less far, and taking longer to do it -- rather than as an incoherent mix
         # of fast travel with a lazy wobble.

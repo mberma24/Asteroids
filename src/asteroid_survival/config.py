@@ -27,6 +27,24 @@ and nothing else's.
 
 KNOWN_PATTERNS = PATTERN_NAMES + EXPERIMENTAL_PATTERNS
 
+PATTERN_REACH = {"tumble": 3.0}
+"""Per-pattern multiplier on the amplitude a rock is dealt at spawn. Default 1.0.
+
+`amplitude` is one budget shared by every pattern in a round, and at the amplitudes the
+ladder actually uses -- 48px at round 29, against a 900px arena -- every shape reads as a
+gentle wave. That is fine for the ten that are meant to be waves. `tumble` exists to be
+chaotic, and chaos at 48px is a straight line with a tremor.
+
+This is applied by `Simulation._spawn_asteroid`, not inside `pattern_offset`, so amplitude
+remains an exact bound on the pattern function itself and every invariant test still holds
+per unit of amplitude. Note the observation's `speed_scale` is built from the round's
+`amplitude_max` and therefore understates a boosted rock's velocity features; there is no
+clipping, so the cost is resolution rather than correctness.
+"""
+
+PATTERN_REACH_CAP = 0.30
+"""Ceiling on a boosted amplitude, as a share of arena width, so a late round stays sane."""
+
 
 @dataclass(slots=True)
 class ArenaConfig:

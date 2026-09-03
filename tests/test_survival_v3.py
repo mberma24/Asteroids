@@ -174,3 +174,62 @@ def test_tumble_is_the_same_episode_on_every_machine():
     assert -1.0 <= _hash_unit(999, 3) <= 1.0
     first = pattern_offset("tumble", 3.25, 50.0, 2.0, 1.1)
     assert pattern_offset("tumble", 3.25, 50.0, 2.0, 1.1) == first
+
+
+def test_tumble_is_dealt_more_room_than_the_patterns_meant_to_be_waves():
+    """Amplitude is one budget for the whole round, and chaos needs more of it than a wave.
+
+    At round 29 the round's amplitude tops out near 48px against a 900px arena, where every
+    shape reads as a gentle wave. `PATTERN_REACH` boosts `tumble` at spawn, outside
+    `pattern_offset`, so amplitude stays an exact bound on the pattern function itself.
+    """
+    import statistics
+
+    from asteroid_survival.actions import Action
+    from asteroid_survival.config import PATTERN_REACH, PATTERN_REACH_CAP
+    from asteroid_survival.simulation import Simulation
+
+    spec = _v3()
+    dealt = {}
+    for name in ("sine", "tumble"):
+        config = spec.stages[28].game_config(spec.base)
+        config.asteroid.motion_mode = "specific"
+        config.asteroid.specific_pattern = name
+        config.ship.invulnerable = True
+        sim = Simulation(config)
+        sim.reset(4)
+        amplitudes = []
+        for _ in range(900):
+            sim.step({ship.id: Action.NOOP for ship in config.ships})
+            amplitudes += [rock.amplitude for rock in sim._asteroids]
+        dealt[name] = statistics.fmean(amplitudes)
+    assert dealt["tumble"] > 2.5 * dealt["sine"]
+    assert PATTERN_REACH["tumble"] == 3.0
+
+    # The boost is capped, or a late round would sweep most of the arena.
+    top = spec.stages[95].game_config(spec.base)
+    top.asteroid.motion_mode = "specific"
+    top.asteroid.specific_pattern = "tumble"
+    top.ship.invulnerable = True
+    sim = Simulation(top)
+    sim.reset(4)
+    for _ in range(600):
+        sim.step({ship.id: Action.NOOP for ship in top.ships})
+    ceiling = PATTERN_REACH_CAP * top.arena.width
+    assert max(rock.amplitude for rock in sim._asteroids) <= ceiling + 1e-6
+
+
+def test_the_reach_boost_leaves_every_other_pattern_alone():
+    from asteroid_survival.actions import Action
+    from asteroid_survival.simulation import Simulation
+
+    spec = _v3()
+    config = spec.stages[28].game_config(spec.base)
+    config.ship.invulnerable = True
+    sim = Simulation(config)
+    sim.reset(9)
+    for _ in range(900):
+        sim.step({ship.id: Action.NOOP for ship in config.ships})
+    # No stage names `tumble` yet, so nothing on the field may exceed the round's amplitude.
+    assert all(rock.amplitude <= config.asteroid.amplitude_max + 1e-6
+               for rock in sim._asteroids)
