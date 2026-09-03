@@ -219,78 +219,35 @@ def test_tumble_is_dealt_more_room_than_the_patterns_meant_to_be_waves():
     assert max(rock.amplitude for rock in sim._asteroids) <= ceiling + 1e-6
 
 
-def test_the_reach_boost_leaves_every_other_pattern_alone():
+def test_the_reach_boost_touches_only_the_pattern_it_names():
+    """Round 28 has no boosted pattern; round 29 has `orbit` and nothing else boosted."""
     from asteroid_survival.actions import Action
     from asteroid_survival.simulation import Simulation
 
     spec = _v3()
-    config = spec.stages[28].game_config(spec.base)
-    config.ship.invulnerable = True
-    sim = Simulation(config)
-    sim.reset(9)
-    for _ in range(900):
-        sim.step({ship.id: Action.NOOP for ship in config.ships})
-    # No stage names `tumble` yet, so nothing on the field may exceed the round's amplitude.
-    assert all(rock.amplitude <= config.asteroid.amplitude_max + 1e-6
-               for rock in sim._asteroids)
+    for index, boosted in ((27, set()), (28, {"orbit"})):
+        config = spec.stages[index].game_config(spec.base)
+        config.ship.invulnerable = True
+        sim = Simulation(config)
+        sim.reset(9)
+        seen = set()
+        for _ in range(1200):
+            sim.step({ship.id: Action.NOOP for ship in config.ships})
+            for rock in sim._asteroids:
+                if rock.amplitude > config.asteroid.amplitude_max + 1e-6:
+                    seen.add(rock.pattern)
+        assert seen == boosted, f"round {index + 1}: boosted {seen}, expected {boosted}"
 
 
-def test_orbit_circles_a_centre_that_travels_with_it():
-    """A true circle, not a swing to one side of the drift line.
-
-    `arc`, `corkscrew` and `spiral` all use `_loop`, whose `1 - cos` keeps the whole circle on
-    one side so the excursion stays inside the amplitude; they read as bulges. `orbit` is
-    centred, so its distance from the drifting centre is constant.
-    """
-    import math
-
-    from asteroid_survival.patterns import ORBIT_RATE, pattern_offset
-
-    radii = []
-    for step in range(4000):
-        along, _, lateral, _ = pattern_offset("orbit", step * 0.004, 50.0, 2.0, 0.7)
-        radii.append(math.hypot(along, lateral))
-    assert max(radii) - min(radii) < 1e-9        # a circle, so the radius never varies
-    assert abs(max(radii) - 50.0) < 1e-9         # and it is exactly the amplitude
-    assert ORBIT_RATE <= 3.0                     # peak speed is rate * amplitude * frequency
-
-
-def test_orbit_actually_loops_at_the_speeds_the_ladder_uses():
-    """A circle only reads as an orbit when it outruns the drift; otherwise it is a bulge."""
-    import math
-
-    from asteroid_survival.config import PATTERN_REACH, PATTERN_REACH_CAP
-    from asteroid_survival.patterns import ORBIT_RATE
-
+def test_orbit_is_in_every_round_from_29_on_at_an_equal_share():
+    """Every round from 29 to 96, not a sample of them, and no round favours one shape."""
     spec = _v3()
-    for index in (28, 51, 95):
+    assert "orbit" not in spec.stages[27].patterns          # round 28, the seam
+    assert abs(spec.stages[27].linear_probability - 1 / 12) < 1e-4
+    for index in range(28, 96):                             # rounds 29 through 96
         stage = spec.stages[index]
-        rock = stage.game_config(spec.base).asteroid
-        amplitude = min(
-            (rock.amplitude_min + rock.amplitude_max) / 2 * PATTERN_REACH["orbit"],
-            PATTERN_REACH_CAP * 900)
-        period = (rock.wavelength_min + rock.wavelength_max) / 2
-        tangential = amplitude * ORBIT_RATE * (2 * math.pi / period)
-        forward = (rock.min_speed + rock.max_speed) / 2
-        assert tangential > forward, f"round {index + 1} would bulge, not orbit"
-
-
-def test_both_new_patterns_are_distinct_from_everything_else():
-    import math
-
-    from asteroid_survival.config import KNOWN_PATTERNS
-    from asteroid_survival.patterns import pattern_offset
-
-    frequency, samples = 2 * math.pi / 3.0, [i * 12.0 / 2000 for i in range(2000)]
-    shapes = {}
-    for name in KNOWN_PATTERNS:
-        points = [pattern_offset(name, t, 1.0, frequency, 0.0) for t in samples]
-        flat = [v for along, _, lateral, _ in points for v in (along, lateral)]
-        mean = sum(flat) / len(flat)
-        centred = [v - mean for v in flat]
-        norm = math.sqrt(sum(v * v for v in centred)) or 1.0
-        shapes[name] = [v / norm for v in centred]
-    for new in ("tumble", "orbit"):
-        worst = max(abs(sum(a * b for a, b in zip(shapes[new], shapes[other])))
-                    for other in KNOWN_PATTERNS if other != new)
-        assert worst < 0.75, f"{new} is a near-duplicate at {worst:.3f}"
+        assert "orbit" in stage.patterns, f"round {index + 1} is missing orbit"
+        assert len(stage.patterns) == len(set(stage.patterns)) == 12, f"round {index + 1}"
+        # `_pattern` draws uniformly from the pool, so equal membership is equal chance, and
+        # straight is one trajectory among equals at 1 / (patterns + 1).
+        assert abs(stage.linear_probability - 1 / 13) < 1e-4, f"round {index + 1}"

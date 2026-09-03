@@ -67,6 +67,11 @@ no_hit_seconds_start = 0.0
 no_hit_seconds_step = 0.0
 promotion_accuracy = 0.05
 
+# `orbit` joins the pool at round 29, the first round after the seam: a true circle around a
+# centre that travels with the rock, where every other looping shape here is a bulge to one
+# side of the drift line. Straight stays one trajectory among equals, so `linear_probability`
+# moves from 1/12 to 1/13 wherever the pool grows to twelve.
+#
 # `until` counts this file's own rounds, not the ladder's: round = 27 + until. So 1 is round
 # 28, 25 is round 52, 55 is round 82, 69 is round 96. The composition boundaries are v2's.
 [[progression.phases]]
@@ -77,18 +82,18 @@ asteroid_size = ["medium", "medium", "large", "large"]
 
 [[progression.phases]]
 until = 25
-patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
-linear_probability = 0.0833333
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
 asteroid_size = "large"
 
 [[progression.phases]]
 until = 55
-patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
-linear_probability = 0.0833333
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
 asteroid_size = ["large", "large", "large", "medium"]
 
 [[progression.phases]]
 until = 69
-patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
-linear_probability = 0.0833333
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
 asteroid_size = "mixed"
