@@ -142,6 +142,20 @@ grow together and their ratio is what sets curvature. Above that point the added
 is rock size, count and spawn rate, which v3 does not change. That was the deliberate choice:
 a rock that traces one big arc beats a rock that buzzes.
 
+**Measured ceiling.** The blind planning oracle -- lookahead over what is on the field, no
+clairvoyance about spawns or fragments -- over 16 seeds a round:
+
+| round | v2 ladder | v3 ladder |
+|---:|---:|---:|
+| 52 | 0.500 | 0.812 |
+| 73 | -- | 0.812 |
+| 96 | 0.188 | 0.750 |
+
+v2's late rounds sit far below its own 0.75 promotion gate, so they were unpassable by any
+reactive policy rather than merely hard. That, more than how the motion reads, is the reason
+to prefer v3. Its round 96 at 0.750 is exactly on the gate, so the very top is still
+marginal.
+
 **Observation v9.** v3 runs past two clamps in the v5 difficulty block -- `amplitude_max/200`
 pins from round 73 and `wavelength_max/6` from round 71 -- which would make its last
 twenty-odd rounds read as one identical round. v9 appends rescaled copies (`/300` and `/8`)

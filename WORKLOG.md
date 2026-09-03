@@ -8,6 +8,54 @@ Last updated: 2026-09-03.
 
 ---
 
+## 2026-09-03 (later): the old ladder's late rounds were never passable, and v13 promoted
+
+Two findings, one of which corrects a claim I made earlier the same day.
+
+**v13 promoted off round 27 at episode 87,000.** Round 27 took 174 evaluations and ended with
+a last-ten mean of 0.755 against the 0.75 bar; champion is episode 87,500 at 0.766. It is now
+on round 28, 45 evaluations in, averaging 0.702. The v12 control sat flat at 0.67 for 22,000
+episodes from the same fork and never crossed. So the fire-consequence observation did
+eventually clear the rung, at 87,000 episodes -- slow, and the first time this ladder has
+moved past round 27.
+
+**The blind planning oracle on the late rounds, 16 seeds each.** The oracle is this project's
+reactive-ceiling reference: lookahead over what is already on the field, no clairvoyance
+about spawns or fragments.
+
+| round | v2 ladder | v3 ladder |
+|---:|---:|---:|
+| 52 | **0.500** | 0.812 |
+| 73 | -- | 0.812 |
+| 96 | **0.188** | 0.750 |
+
+**v2's round 96 clears 0.188 against its own 0.75 promotion gate.** Round 52 clears 0.500.
+Both are far below the bar, so a large part of the existing ladder has been unpassable by any
+reactive policy, not merely hard. Difficulty had outrun the ceiling somewhere between rounds
+28 and 52, and every round above that was decoration.
+
+**Which corrects what I wrote a few hours earlier.** On seeing v3 round 52 at 0.812 against
+v2's 0.500 I reported the new tier as "substantially easier, not just differently flavoured"
+and suggested revisiting the halved speed growth to put the difficulty back. That was drawn
+from one point with no ceiling reference. With round 96 measured, easier is the fix rather
+than the regression: v3 is the first version of the late ladder that sits inside the feasible
+region at all. The halved speed growth is doing the work, and prediction difficulty is not
+what drives clear rate here -- v2 and v3 round 52 have near-identical 0.5s prediction error
+(28 vs 24px p90) and differ by 31 points of oracle clear, on speed alone.
+
+**Two caveats, both stated rather than buried.** n=16 gives roughly +-0.11, so 0.812 against
+0.750 is not a real difference while 0.188 against 0.750 plainly is. And v3's round 96 at
+0.750 sits exactly on the gate, so the very top of the new ladder is still marginal: a policy
+would have to be at the reactive ceiling to promote out of it.
+
+**Actionable.** v13 is on round 28 now, and v2's ladder is already below its gate by round 52.
+It will run into an impossible rung within a few dozen rounds. `cloud/asteroids-v14-expressive.conf`
+forks it onto v3 at round 27; the case for switching is now about feasibility rather than
+about how the motion looks. Running to find where v2 first crosses its own gate between
+rounds 28 and 52.
+
+---
+
 ## 2026-09-03: v13 at the 20,000-episode decision point -- a split result
 
 The criterion registered in advance was: keep the block if round 27 clears materially above
