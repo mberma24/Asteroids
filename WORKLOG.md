@@ -4,7 +4,48 @@ Running record of what has been changed and what was learned, so work can resume
 sessions without re-deriving it. Newest context at the top; the detail is chronological
 below.
 
-Last updated: 2026-09-02.
+Last updated: 2026-09-03.
+
+---
+
+## 2026-09-03: v13 at the 20,000-episode decision point -- a split result
+
+The criterion registered in advance was: keep the block if round 27 clears materially above
+0.70 *and* the share of shots taken while a hit is predicted falls. One held, one did not.
+
+```
+round 27 clear   v13 last 14 evals  0.710 +- 0.019      most recent 5   0.750
+                 v12 control        0.671 +- 0.010      45 evals, flat
+                 difference         +0.039 +- 0.021     ~1.8 sigma
+```
+
+v13's curve is monotone from 0.613 at episode 3,000 through 0.750 at 23,000. v12 never moved
+off 0.67 in 22,000 episodes from the same fork. That is the first sustained rise on this rung
+in the project, but 1.8 sigma is suggestive, not decisive.
+
+**The mechanism did not do what I said it would.** Flagged shots as a share of all splitting
+shots: v12 4.0%, v13 at 7,500 episodes 4.0%, v13 now 4.6%. The policy has not stopped taking
+shots the predictor calls dangerous.
+
+**What did change is which shots kill it.** The share of fatal shots that were flagged fell
+from 93% to 62%, and the newly unflagged ones are long-range: fatal shot distances now
+include 292, 389, 402, 417 and 474px where before they were 36-110px. The predictor detects
+100% of hits landing within 0.4s, 36% at 0.6-1.0s and 1.4% beyond -- so those deaths are in
+its blind spot by construction. The policy appears to be avoiding the close fatal shots it
+can see and dying to distant ones it cannot.
+
+That is a coherent story and it is also exactly the kind of story worth distrusting, because
+it was assembled after the fact. It predicts something checkable: extending the predictor's
+horizon should convert those deaths, and if it does not, the shift is noise. Not acting on it
+yet.
+
+**Also recorded, since it looked wrong and is not.** The episode-18,500 evaluation read 89.1%
+clear against a 75% gate and did not become champion. The comparison is a three-evaluation
+smoothed average, and the two readings before it were 0.625 and 0.688, giving 0.735 against
+the champion's stored 0.771 clear estimate. The same log line carries the answer: its pooled
+256-episode clear was 73.0%. At n=64 and a true rate near 0.70 an 89.1% panel is +3.3 sigma,
+a draw rather than a level, and installing on it is the phantom-champion failure of
+2026-08-18 that the smoothing exists to prevent. Working as intended.
 
 ---
 
