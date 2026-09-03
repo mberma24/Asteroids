@@ -8,6 +8,50 @@ Last updated: 2026-09-02.
 
 ---
 
+## 2026-09-02 (night): v13 at 7,500 episodes -- the block is read, the behaviour has not moved
+
+A checkpoint reading, not a verdict; the pre-registered decision point is 20,000 episodes.
+
+```
+round 27 clear    v13  0.652  (15 evals, 7,500 episodes)
+                  v12  0.670  (45 evals, 22,000 episodes -- the control)
+champion          episode 2,500, never improved on the fork
+shots fired while a hit is predicted   v13 4.0%   v12 4.0%   -- unchanged
+```
+
+**The outcome has not moved and neither has the behaviour the block was built to change.**
+
+**A worry raised and then disproved.** The ten new inputs transfer at exactly zero weight, and
+after 1,482 updates their mean magnitude in the first policy layer is 0.012 against 0.061 for
+the comparable v7 threat block -- 19%, growing about 0.001 per 1,000 episodes, which
+extrapolates to ~50,000 episodes before the block carries ordinary influence. That looked
+like a design fault: the zero-init that makes the fork neutral also makes the feature slow to
+matter.
+
+Weight magnitude is a proxy, so it was checked directly. `scripts/ablate_block.py` runs the
+same checkpoint over the same seeds with the block replaced by the blank value the encoder
+writes when it has nothing to report:
+
+```
+clear    normal 0.688   ablated 0.635
+episodes with an identical action sequence   31/96
+```
+
+**The block reaches the policy's decisions in two thirds of episodes**, so it is not being
+ignored and no init change is warranted. The 5.3-point gap is a net of about five episodes
+across 96 paired seeds and is not distinguishable from zero -- what is established is that
+the feature is read, not yet that it helps.
+
+**Why the upside is still large.** Only 4.0% of splitting shots are flagged, and 14 of the 18
+fatal ones sit inside that 4%. A policy that simply declined the flagged shots it does not
+need would avoid most of its deaths. That is the behaviour to watch for, and it has not
+started.
+
+Left running to the pre-registered 20,000 episodes. Nothing here is a mechanism for
+intervening, and the one candidate mechanism was measured and rejected.
+
+---
+
 ## 2026-09-02 (evening): the ladder change was necessary and not sufficient; v13 tests the observation
 
 **v12 answered.** On the deterministic-fragment ladder it promoted off round 26 at episode
