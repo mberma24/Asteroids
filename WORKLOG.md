@@ -48,11 +48,21 @@ what drives clear rate here -- v2 and v3 round 52 have near-identical 0.5s predi
 0.750 sits exactly on the gate, so the very top of the new ladder is still marginal: a policy
 would have to be at the reactive ceiling to promote out of it.
 
-**Actionable.** v13 is on round 28 now, and v2's ladder is already below its gate by round 52.
-It will run into an impossible rung within a few dozen rounds. `cloud/asteroids-v14-expressive.conf`
-forks it onto v3 at round 27; the case for switching is now about feasibility rather than
-about how the motion looks. Running to find where v2 first crosses its own gate between
-rounds 28 and 52.
+**Where v2 crosses its own gate: round 34.** Filling in the sweep, 16 seeds a round:
+
+| v2 round | 34 | 40 | 46 | 52 | 96 |
+|---|---:|---:|---:|---:|---:|
+| blind oracle clear | 0.688 | 0.500 | 0.562 | 0.500 | 0.188 |
+
+It is under the 0.75 gate from round 34 and never recovers, sitting around 0.50-0.56 through
+the forties and fifties before collapsing at the top. So the passable part of the v2 ladder
+ends at about round 33 of 96.
+
+**Actionable.** v13 is on round 28, pooling 0.734 and close to promoting. It has roughly five
+passable rounds left. Let it take round 28, then fork onto v3 via
+`cloud/asteroids-v14-expressive.conf` -- no later than round 33, after which it would be
+grinding rungs no reactive policy can clear, which is the failure mode that cost this project
+its first three weeks.
 
 ---
 
