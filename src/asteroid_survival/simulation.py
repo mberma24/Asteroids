@@ -205,8 +205,8 @@ class Simulation:
                 ship.cooldown = c.fire_cooldown
                 events.append(GameEvent("projectile_fired", self.step_count, str(projectile.id), ship.id))
 
-    def fire_consequence(self, ship_id: str, *, horizon: float = 1.0
-                        ) -> "FireConsequence | None":
+    def fire_consequence(self, ship_id: str, *, horizon: float = 1.0,
+                         turn: float = 0.0) -> "FireConsequence | None":
         """If this ship fired right now, what would the shot hit and where would the pieces go?
 
         The policy's dominant cause of death is a fragment of a rock it has just shot: 18 of
@@ -222,6 +222,12 @@ class Simulation:
         size. This walks the shot to its first hit and the two resulting pieces out to
         ``horizon``, against a ship that holds its current velocity.
 
+        ``turn`` is the turn component of the action being considered, in the units
+        :class:`~asteroid_survival.actions.Action` uses. The simulator rotates the ship
+        before it fires, so a shot taken with ``LEFT_FIRE`` leaves along a heading one
+        frame of rotation away from the current one; passing the turn here asks what *that*
+        shot would do. Left at zero it answers for a plain ``FIRE``.
+
         Returns ``None`` when no shot is possible (the weapon is on cooldown or the ship is
         dead) or when nothing is hit inside the projectile's lifetime.
         """
@@ -230,7 +236,8 @@ class Simulation:
             return None
         c, w, h = self.config.ship, self.config.arena.width, self.config.arena.height
         pc = self.config.projectile
-        direction = from_angle(ship.angle)
+        angle = ship.angle + turn * c.turn_speed * self.dt
+        direction = from_angle(angle)
         origin = wrap(ship.pos + direction * (c.radius + 5), w, h)
         velocity = ship.vel + direction * pc.speed
 
@@ -305,7 +312,7 @@ class Simulation:
         if worst_clearance is math.inf:
             worst_clearance = math.hypot(w / 2, h / 2)
         offset = wrapped_delta(ship.pos, hit_pos, w, h)
-        bearing = math.atan2(offset.y, offset.x) - ship.angle
+        bearing = math.atan2(offset.y, offset.x) - angle
         return FireConsequence(
             time_to_hit=best_time, target_id=best_rock.id, distance=offset.length(),
             size=best_rock.size, splits=splits, bearing=bearing,

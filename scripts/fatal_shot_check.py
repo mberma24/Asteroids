@@ -43,9 +43,14 @@ def run(seed):
     done = False
     while not done:
         before = len(events)
-        prediction = env.simulation.fire_consequence(env.agent_id)
         elapsed = env.state.elapsed
-        obs, _, terminated, truncated, info = env.step(ctl(obs))
+        action_index = ctl(obs)
+        action = env.actions[action_index]
+        # The simulator rotates before it fires, so ask about the heading the shot actually
+        # leaves along, not the one the ship is sitting at when the decision is made.
+        prediction = (env.simulation.fire_consequence(env.agent_id, turn=action.turn)
+                      if action.fire else None)
+        obs, _, terminated, truncated, info = env.step(action_index)
         fired = any(e.kind == "projectile_fired" and e.detail == env.agent_id
                     for _, e in events[before:])
         if fired and prediction is not None:
