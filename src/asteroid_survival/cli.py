@@ -191,8 +191,25 @@ def simulate(config: GameConfig, seed: int, max_steps: int | None) -> int:
 
 
 PATTERN_KEYS = ("sine", "zigzag", "sawtooth", "s_curve", "serpentine", "lane_change",
-                "arc", "corkscrew", "figure_eight", "spiral", "brownian", "linear")
-"""Pattern per number key, 1 through 9 then 0 then minus, ending on plain linear."""
+                "arc", "corkscrew", "figure_eight", "spiral", "brownian", "gust")
+"""Pattern per number key: 1 through 9, then 0, minus, equals. L is plain linear."""
+
+PATTERN_NOTES = {
+    "sine": "an even side-to-side wave",
+    "zigzag": "the same wave, but with sharp corners instead of curves",
+    "sawtooth": "a long drift one way, then a quick run back, at uneven intervals",
+    "s_curve": "a lazy S: sweeps across, then dwells at each side",
+    "serpentine": "full-width sweeps with sharp corners, timed so they never repeat",
+    "lane_change": "parks in one lane, then snaps across into another",
+    "arc": "one wide continuous turn, a slow circle",
+    "corkscrew": "tight repeated loops that curl back on themselves",
+    "figure_eight": "a real figure eight, crossing its own path",
+    "spiral": "loops that widen from nothing out to full size",
+    "brownian": "an aimless wander, no shape and no rhythm",
+    "gust": "glides almost straight, then swerves wide, on no schedule",
+    "linear": "dead straight, no pattern at all",
+}
+"""Plain-language labels for a human watching, not used by anything the agent reads."""
 
 
 def watch_patterns(config: GameConfig, seed: int, *, trails: bool = True,
@@ -266,9 +283,12 @@ def watch_patterns(config: GameConfig, seed: int, *, trails: bool = True,
                     chosen, restart = PATTERN_KEYS[index], True
                 elif key == pygame.K_m:
                     chosen, restart = None, True
+                elif key == pygame.K_l:
+                    chosen, restart = "linear", True
                 elif key in (pygame.K_RIGHT, pygame.K_LEFT):
                     step = 1 if key == pygame.K_RIGHT else -1
-                    here = -1 if chosen is None else PATTERN_KEYS.index(chosen)
+                    here = (PATTERN_KEYS.index(chosen)
+                            if chosen in PATTERN_KEYS else -1)
                     chosen = PATTERN_KEYS[(here + step) % len(PATTERN_KEYS)]
                     restart = True
                 elif key in (pygame.K_UP, pygame.K_DOWN):
@@ -300,9 +320,10 @@ def watch_patterns(config: GameConfig, seed: int, *, trails: bool = True,
         stretch = (speed * period) / swing if swing > 0.5 else float("inf")
         renderer.draw(state, paused, notes=(
             (chosen or "mixed pool").upper(),
+            PATTERN_NOTES.get(chosen, "every pattern at once, as the round really is"),
             f"swing {swing:.0f}px    period {period:.2f}s    speed {speed:.0f}px/s"
             + (f"    stretch {stretch:.1f}:1" if stretch != float("inf") else ""),
-            "1-9 0 - =  pattern    M mixed    < >  cycle    Up/Down swing",
+            "1-9 0 - =  pattern    M mixed    L linear    < >  cycle    Up/Down swing",
             "[ ] period    , . speed    T trails    P pause    R reset    Esc quit",
         ))
         clock.tick(config.arena.fps)

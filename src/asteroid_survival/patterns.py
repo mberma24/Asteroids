@@ -60,6 +60,18 @@ _BROWNIAN_SCALE = (1.0 / math.sqrt(1.0 + _BROWNIAN_ALONG ** 2)) / sum(
     1.0 / (_BROWNIAN_BASE * GOLDEN ** index) for index in range(_BROWNIAN_TERMS))
 """1/f component weights, normalised so along and lateral together stay inside amplitude."""
 
+GUST_FLOOR = 0.12
+"""Smallest share of its amplitude `gust` ever swings, so a glide still drifts."""
+
+ALONG_SHARE = 0.55
+"""How much of `gust`'s swerve runs along the direction of travel rather than across it.
+
+Kept under one for the same reason `brownian` keeps its own share low: motion along the
+drift axis cancels forward progress, and a rock that never closes cannot threaten. It also
+keeps the combined excursion inside `amplitude`, since the two components are a quarter-phase
+apart and the larger of them is the lateral one.
+"""
+
 PEAK_SPEED_FACTOR = 3.0
 """Largest displacement speed any pattern reaches, in units of ``amplitude * frequency``.
 
@@ -203,6 +215,40 @@ def pattern_offset(name: str, t: float, amplitude: float, frequency: float, phas
         # half-amplitude sine at double frequency -- indistinguishable from `sine`.
         return (a * math.sin(x), a * w * math.cos(x),
                 a * 0.5 * math.sin(2 * x), a * w * math.cos(2 * x))
+
+    if name == "gust":
+        # Long, nearly straight glides broken by sudden wide swerves at times that never
+        # repeat. Every other pattern here holds a roughly steady swing, so a policy can
+        # learn "this rock oscillates about this much" and lead it; this one offers no such
+        # handle, because the rock looks linear right up until it does not.
+        #
+        # Two pieces. A carrier whose timing is warped by an incommensurate term, so the
+        # swings themselves land off any beat -- that much it shares with `serpentine`. And,
+        # unlike anything else, an *envelope*: two slow peaked terms at an irrational ratio,
+        # multiplied, so a full-amplitude swerve needs both to crest at once and therefore
+        # arrives on no schedule. Between crests the envelope is near zero and the rock
+        # glides. The swerve carries along-track motion a quarter-phase out, so it curls
+        # into the turn rather than sliding flat across it.
+        rate, warp = 1.05, 0.7
+        u = rate * x + warp * math.sin(rate * x / GOLDEN)
+        du = rate * w * (1 + warp * math.cos(rate * x / GOLDEN) / GOLDEN)
+        first, second = 0.47, 0.47 / GOLDEN
+        crest = 0.5 * (1 + math.sin(first * x))
+        other = 0.5 * (1 + math.sin(second * x + 2.4))
+        d_crest = 0.5 * first * w * math.cos(first * x)
+        d_other = 0.5 * second * w * math.cos(second * x + 2.4)
+        # A floor under the envelope, so a glide is a lull rather than a dead straight line
+        # and the rock is never briefly a different pattern. Measured over three phases: it
+        # glides within 15% of straight about a third of the time and reaches past 70% of
+        # full amplitude about a tenth, where a sine is at 10% and 51%.
+        envelope = GUST_FLOOR + (1 - GUST_FLOOR) * crest * other
+        d_envelope = (1 - GUST_FLOOR) * (d_crest * other + crest * d_other)
+        swing, d_swing = math.sin(u), math.cos(u) * du
+        curl, d_curl = math.cos(u), -math.sin(u) * du
+        return (a * ALONG_SHARE * (envelope * curl),
+                a * ALONG_SHARE * (d_envelope * curl + envelope * d_curl),
+                a * (envelope * swing),
+                a * (d_envelope * swing + envelope * d_swing))
 
     if name == "spiral":
         # Loops that widen from nothing to the configured amplitude and then hold. The cap

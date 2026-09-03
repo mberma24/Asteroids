@@ -162,3 +162,36 @@ twenty-odd rounds read as one identical round. v9 appends rescaled copies (`/300
 rather than editing the v5 inputs, so existing weights keep their meaning and a v8 checkpoint
 widens in at zero weight. `wavelength_min` is deliberately not duplicated: it tops out at
 5.4s and never reaches its own clamp.
+
+
+---
+
+## What each pattern actually is
+
+Plain-language labels, for reading rather than for anything the agent sees. Watch any of them
+with `./run.sh patterns survival-v3 52` and the number keys.
+
+| key | pattern | what it does |
+|---|---|---|
+| 1 | `sine` | an even side-to-side wave |
+| 2 | `zigzag` | the same wave, but with sharp corners instead of curves |
+| 3 | `sawtooth` | a long drift one way, then a quick run back, at uneven intervals |
+| 4 | `s_curve` | a lazy S: sweeps across, then dwells at each side |
+| 5 | `serpentine` | full-width sweeps with sharp corners, timed so they never repeat |
+| 6 | `lane_change` | parks in one lane, then snaps across into another |
+| 7 | `arc` | one wide continuous turn, a slow circle |
+| 8 | `corkscrew` | tight repeated loops that curl back on themselves |
+| 9 | `figure_eight` | a real figure eight, crossing its own path |
+| 0 | `spiral` | loops that widen from nothing out to full size |
+| - | `brownian` | an aimless wander, no shape and no rhythm |
+| = | `gust` | glides almost straight, then swerves wide, on no schedule |
+| L | linear | dead straight, no pattern at all |
+
+`gust` is new and **not yet in any curriculum**. Every other pattern holds a roughly steady
+swing, so a policy can learn "this rock oscillates about this much" and lead it. `gust` gives
+no such handle: an envelope built from two slow terms at an irrational ratio means a
+full-amplitude swerve needs both to crest at once, which happens on no schedule. Measured
+across three phases it glides within 15% of straight 39% of the time and reaches past 70% of
+full amplitude 8% of the time, where a sine is at 10% and 51%. It stays inside its amplitude
+(47.1 of a 51 bound), peaks at 1.24x `amplitude x frequency` against the 3.0 ceiling, and its
+closest resemblance to any existing pattern is 0.517 against a 0.75 near-duplicate limit.

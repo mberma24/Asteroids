@@ -8,7 +8,7 @@ from typing import Any
 
 PATTERN_NAMES = (
     "sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change",
-    "serpentine", "corkscrew", "figure_eight", "spiral", "brownian",
+    "serpentine", "corkscrew", "figure_eight", "spiral", "brownian", "gust",
 )
 
 
