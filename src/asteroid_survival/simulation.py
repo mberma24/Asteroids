@@ -7,7 +7,7 @@ from typing import Mapping
 
 from .actions import Action
 from .config import AsteroidConfig, GameConfig
-from .math2d import Vec2, from_angle, wrap, wrapped_distance
+from .math2d import Vec2, from_angle, wrap, wrapped_delta, wrapped_distance
 from .patterns import trajectory
 from .state import (AsteroidSnapshot, GameEvent, ObjectiveSnapshot, ProjectileSnapshot,
                     ShipSnapshot, StepResult, TerminalReason, WorldSnapshot)
@@ -49,6 +49,24 @@ class _Projectile:
 
 
 ASTEROID_RADII = {1: 13.0, 2: 24.0, 3: 39.0}
+
+
+@dataclass(frozen=True, slots=True)
+class FireConsequence:
+    """What a shot taken right now would hit, and what its fragments would then do."""
+
+    time_to_hit: float
+    target_id: int
+    distance: float
+    size: int
+    splits: bool
+    bearing: float
+    worst_clearance: float
+    """Closest the worse of the two fragments comes to the ship; negative means a hit."""
+    worst_at: float
+    """Seconds from now at which that closest approach happens."""
+    closing: float
+    """Speed the fragment is closing on the ship at that moment."""
 
 
 class Simulation:
@@ -186,6 +204,112 @@ class Simulation:
                 self._projectiles.append(projectile)
                 ship.cooldown = c.fire_cooldown
                 events.append(GameEvent("projectile_fired", self.step_count, str(projectile.id), ship.id))
+
+    def fire_consequence(self, ship_id: str, *, horizon: float = 1.0
+                        ) -> "FireConsequence | None":
+        """If this ship fired right now, what would the shot hit and where would the pieces go?
+
+        The policy's dominant cause of death is a fragment of a rock it has just shot: 18 of
+        the v12 champion's 21 deaths over 96 seeds, most of them under a second old. The
+        decision that kills it is the shot, taken half a second earlier, and at 180 px/s^2
+        the ship displaces about 7px in the quarter-second it has once the piece is on its
+        way -- so there is nothing to learn about dodging, and everything to learn about not
+        taking the shot. Nothing in the observation says what a shot would produce.
+
+        With ``fragment_motion = "inherit"`` that answer is a closed form rather than a
+        prediction: a fragment keeps its parent's pattern, swing and phase, its heading is
+        the parent's velocity rotated by +-0.45 rad, and its speed is the parent's rescaled by
+        size. This walks the shot to its first hit and the two resulting pieces out to
+        ``horizon``, against a ship that holds its current velocity.
+
+        Returns ``None`` when no shot is possible (the weapon is on cooldown or the ship is
+        dead) or when nothing is hit inside the projectile's lifetime.
+        """
+        ship = next((s for s in self._ships if s.id == ship_id), None)
+        if ship is None or not ship.alive or ship.cooldown > 0.0:
+            return None
+        c, w, h = self.config.ship, self.config.arena.width, self.config.arena.height
+        pc = self.config.projectile
+        direction = from_angle(ship.angle)
+        origin = wrap(ship.pos + direction * (c.radius + 5), w, h)
+        velocity = ship.vel + direction * pc.speed
+
+        # Which rock the shot reaches first. Linear over the projectile's 1.45s lifetime is
+        # accurate to ~2px at 0.5s and ~7px at 1.0s on this curriculum (measured 2026-08-26),
+        # well inside the 13-39px radii being tested against.
+        best_time, best_rock = math.inf, None
+        for a in self._asteroids:
+            delta = wrapped_delta(origin, a.pos, w, h)
+            rvx, rvy = a.vel.x - velocity.x, a.vel.y - velocity.y
+            reach = pc.radius + ASTEROID_RADII[a.size]
+            speed2 = rvx * rvx + rvy * rvy
+            if speed2 < 1e-9:
+                continue
+            b = delta.x * rvx + delta.y * rvy
+            discriminant = b * b - speed2 * (delta.x * delta.x + delta.y * delta.y
+                                             - reach * reach)
+            if discriminant < 0.0:
+                continue
+            root = math.sqrt(discriminant)
+            for candidate in sorted(((-b - root) / speed2, (-b + root) / speed2)):
+                if 0.0 <= candidate <= pc.lifetime and candidate < best_time:
+                    best_time, best_rock = candidate, a
+                    break
+        if best_rock is None:
+            return None
+
+        # Where the parent actually is when the shot lands, on its true curved path.
+        hit_pos, hit_vel = trajectory(
+            best_rock.origin, best_rock.forward, best_rock.speed, best_rock.pattern,
+            best_rock.age + best_time, best_rock.amplitude, best_rock.frequency,
+            best_rock.phase)
+        hit_pos = wrap(hit_pos, w, h)
+        splits = best_rock.size > 1
+        # A split that would exceed the active cap is suppressed by the simulator, so a full
+        # field makes shooting paradoxically safe. Read the cap the same way `_collisions`
+        # does rather than assuming it.
+        if len(self._asteroids) >= self._difficulty().active_cap:
+            splits = False
+
+        worst_clearance, worst_at, worst_closing = math.inf, horizon, 0.0
+        if splits:
+            child_size = best_rock.size - 1
+            cfg = self.config.asteroid
+            child_speed = (best_rock.speed / self._size_multiplier(cfg, best_rock.size)
+                           * self._size_multiplier(cfg, child_size))
+            base_angle = math.atan2(hit_vel.y, hit_vel.x)
+            steps = max(1, int(round(horizon * self.config.arena.fps / 2)))
+            interval = horizon / steps
+            for sign in (-1, 1):
+                forward = from_angle(base_angle + sign * 0.45)
+                # A fragment inherits everything but its heading and scale; on a `random`
+                # ladder the speed and shape are redrawn instead and this is only indicative.
+                for index in range(steps + 1):
+                    tau = index * interval
+                    child_pos, child_vel = trajectory(
+                        hit_pos, forward, child_speed, best_rock.pattern, tau,
+                        best_rock.amplitude, best_rock.frequency, best_rock.phase)
+                    # The ship holds its velocity, decayed by drag, which is the neutral
+                    # assumption: what happens if it does nothing about the piece.
+                    future = ship.vel * ((max(0.0, 1.0 - c.drag * self.dt))
+                                         ** (tau * self.config.arena.fps))
+                    ship_pos = ship.pos + ship.vel * tau if not c.mobile else (
+                        ship.pos + (ship.vel + future) * (0.5 * tau))
+                    gap = wrapped_delta(wrap(ship_pos, w, h), wrap(child_pos, w, h), w, h)
+                    clearance = gap.length() - ASTEROID_RADII[child_size] - c.radius
+                    if clearance < worst_clearance:
+                        distance = max(gap.length(), 1e-9)
+                        worst_clearance, worst_at = clearance, best_time + tau
+                        worst_closing = -((child_vel.x - future.x) * gap.x / distance
+                                          + (child_vel.y - future.y) * gap.y / distance)
+        if worst_clearance is math.inf:
+            worst_clearance = math.hypot(w / 2, h / 2)
+        offset = wrapped_delta(ship.pos, hit_pos, w, h)
+        bearing = math.atan2(offset.y, offset.x) - ship.angle
+        return FireConsequence(
+            time_to_hit=best_time, distance=wrapped_delta(ship.pos, hit_pos, w, h).length(),
+            size=best_rock.size, splits=splits, bearing=bearing,
+            worst_clearance=worst_clearance, worst_at=worst_at, closing=worst_closing)
 
     def _update_projectiles(self, events: list[GameEvent]) -> None:
         pc = self.config.projectile

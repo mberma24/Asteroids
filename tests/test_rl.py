@@ -366,7 +366,8 @@ def test_progress_graph_can_select_completion_survival_or_both(tmp_path):
     run.mkdir()
     records = [
         {"environment_steps": step, "training_stage": 0,
-         "stages": [{"name": "round-1", "completion_rate": completion,
+         "stages": [{"name": "round-1", "clear_rate": completion,
+                     "completion_rate": survival,
                      "survival_fraction": survival}]}
         for step, completion, survival in ((100, 0.4, 0.7), (200, 0.6, 0.8))
     ]
@@ -381,6 +382,7 @@ def test_progress_graph_can_select_completion_survival_or_both(tmp_path):
     assert 'data-metric="survival"' in survival
     assert 'data-metric="completion"' not in survival
     assert 'data-metric="completion"' in both and 'data-metric="survival"' in both
+    assert 'points="95.0,342.0 1120.0,258.0"' in both  # clear rate: 40% -> 60%
 
 
 def test_progress_graph_supports_centralized_team_evaluations(tmp_path):
@@ -398,6 +400,35 @@ def test_progress_graph_supports_centralized_team_evaluations(tmp_path):
     svg = plot_progress(run, tmp_path / "team.svg", view="both").read_text()
     assert "team-round-4" in svg
     assert 'data-metric="completion"' in svg and 'data-metric="survival"' in svg
+
+
+def test_progress_graph_renders_in_terminal_without_saving(tmp_path):
+    import json
+
+    from asteroid_survival.rl.plotting import format_progress
+
+    run = tmp_path / "terminal-run"
+    run.mkdir()
+    records = [
+        {"episode": episode, "training_stage": 0, "promoted": episode == 500,
+         "stages": [{"name": "round-1", "clear_rate": completion,
+                     "survival_fraction": survival}]}
+        for episode, completion, survival in ((500, 0.4, 0.7), (1000, 0.6, 0.8))
+    ]
+    (run / "evaluation.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+    chart = format_progress(run, view="both", width=60)
+    assert "C Completion / clear" in chart and "S Survival" in chart
+    assert "40.0% → 60.0% (+20.0 pp; 2 evaluations on round-1)" in chart
+    assert "70.0% → 80.0% (+10.0 pp; 2 evaluations on round-1)" in chart
+    assert "500–1,000 episodes" in chart
+    assert "● Evaluation" in chart
+    assert chart.count("●") + chart.count("◆") >= 3
+    assert "⣿ Promotion" in chart and "P 500 → round-1" in chart
+    assert "80.0% ┤" in chart and "40.0% ┤" in chart
+    assert "Recent held-out evaluations:" not in chart
+    assert not (run / "progress.svg").exists()
 
 
 def test_mobile_observation_contains_ship_velocity():

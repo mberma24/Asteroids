@@ -333,7 +333,7 @@ INITIALIZE_FROM=models/my-run/champion START_STAGE=35 \
 |---|---|---|---|
 | `status [dir]` | run directory | the live run, else newest | Progress, champion, recent held-out evaluations |
 | `follow [dir]` | run directory | the live run, else newest | `status` once, then every new evaluation as it lands |
-| `graph [dir] [both\|completion\|survival\|all]` | run directory, view | newest, `both` | Writes `progress.svg`; `all` is the legacy four-panel report |
+| `graph [dir] [both\|completion\|survival]` | run directory, view | newest, `both` | Prints held-out progress as a terminal line chart; saves nothing |
 | `baseline [N]` | episodes | `60` | Scores the greedy controller |
 | `test` | — | — | Runs the test suite |
 | `test-team CHECKPOINT` | checkpoint | — | Scores a centralized or legacy team policy |
@@ -344,6 +344,12 @@ mean survival, accuracy, promotion streak — flagging `PROMOTED`, `FELL BACK`, 
 `new champion` as they happen. It stops on Ctrl-C, or by itself once the trainer exits and
 there is nothing left to arrive. `FOLLOW_EVERY` (default 15s) sets the poll interval;
 evaluations are minutes apart, so there is no reason to poll hard.
+
+`graph` uses Unicode Braille as a portable 2x4-pixel terminal canvas and expands to the full
+terminal width. Its vertical range automatically zooms to the observed minimum and maximum;
+bright dots mark actual held-out evaluations, while the Braille strokes interpolate between
+them. `P` marks the evaluation that promoted the policy. Set `GRAPH_HEIGHT=30` for a taller
+chart.
 
 ```bash
 ./run.sh follow                       # the run currently training

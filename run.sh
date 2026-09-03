@@ -623,7 +623,7 @@ cmd_finish() {        # continue until every curriculum stage is mastered (or sa
 cmd_graph() {
   local dir view
   case "${1:-}" in
-    completion|survival|both|all)
+    completion|survival|both)
       dir="$(ls -dt models/*/ 2>/dev/null | head -1)"
       view="$1"
       ;;
@@ -633,7 +633,8 @@ cmd_graph() {
       ;;
   esac
   dir="${dir%/}"
-  $PY -m asteroid_survival graph --run "$dir" --view "$view"
+  $PY -m asteroid_survival graph --run "$dir" --view "$view" \
+    --height "${GRAPH_HEIGHT:-20}"
 }
 
 cmd_pull() {         # copy a run's champion down from the training box, to preview locally
@@ -1173,7 +1174,7 @@ Train
 Inspect
   ./run.sh status [dir]         training progress, newest run by default
   ./run.sh follow [dir]         status once, then stream evaluations as they land
-  ./run.sh graph [dir]          save a held-out progress graph
+  ./run.sh graph [dir] [view]   terminal graph (`both`, `completion`, or `survival`)
   ./run.sh baseline [N]         score the greedy controller
   ./run.sh test                 run the test suite
   ./run.sh test-team CHECKPOINT score a shared team policy (SHIPS/LEVEL overrides)

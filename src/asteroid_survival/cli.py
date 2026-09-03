@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import shutil
+import sys
 
 from .actions import Action
 from .config import GameConfig, ShipSpec, load_config
@@ -473,10 +476,12 @@ def main(argv: list[str] | None = None) -> int:
                            help="one-based centralized team curriculum stage")
     graph_parser = sub.add_parser("graph", help="graph held-out progress for a model run")
     graph_parser.add_argument("--run", type=Path, required=True)
-    graph_parser.add_argument("--output", type=Path)
     graph_parser.add_argument(
-        "--view", choices=("completion", "survival", "both", "all"), default="both",
-        help="rate lines to show; 'all' preserves the legacy four-panel report")
+        "--view", choices=("completion", "survival", "both"), default="both",
+        help="rate lines to show in the terminal")
+    graph_parser.add_argument(
+        "--height", type=int, default=20,
+        help="chart rows (8-40; default 20)")
     preview_parser = sub.add_parser(
         "preview", help="watch the best evaluated checkpoint from a curriculum run")
     preview_parser.add_argument("target", type=Path, help="run directory or checkpoint")
@@ -551,9 +556,10 @@ def main(argv: list[str] | None = None) -> int:
         "--no-pilot", action="store_true", help="leave the scripted pilot baseline out")
     args = parser.parse_args(argv)
     if args.command == "graph":
-        from .rl.plotting import plot_progress
-        output = args.output or args.run / "progress.svg"
-        print(f"saved graph: {plot_progress(args.run, output, view=args.view)}")
+        from .rl.plotting import format_progress
+        width = shutil.get_terminal_size(fallback=(100, 24)).columns
+        print(format_progress(args.run, view=args.view, width=width, height=args.height,
+                              color=sys.stdout.isatty() and "NO_COLOR" not in os.environ))
         return 0
     if args.command == "arena":
         controllers = ["human"] + [name for name in args.opponents.split(",") if name]

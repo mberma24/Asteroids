@@ -19,7 +19,9 @@ def _evaluated_stage(record: dict) -> tuple[dict, str]:
 
 
 def _rate(stage: dict, metric: str) -> float | None:
-    fields = ({"completion": ("completion_rate", "success_rate"),
+    # On survival curricula ``completion_rate`` is itself the mean survival fraction.
+    # Prefer the binary full-round outcome so the two plotted lines are informative.
+    fields = ({"completion": ("clear_rate", "success_rate", "completion_rate"),
                "survival": ("survival_fraction", "mean_alive_ship_time_fraction")})
     for field in fields[metric]:
         value = stage.get(field)
@@ -28,9 +30,159 @@ def _rate(stage: dict, metric: str) -> float | None:
     return None
 
 
+def _progress_records(run_dir: str | Path) -> list[dict]:
+    source = Path(run_dir) / "evaluation.jsonl"
+    if not source.exists():
+        raise SystemExit(f"no evaluation log found at {source}")
+    records = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines()
+               if line.strip()]
+    if not records:
+        raise SystemExit(f"evaluation log is empty: {source}")
+    return records
+
+
+def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
+                    height: int = 20, color: bool = False) -> str:
+    """Render held-out completion and survival history directly in a terminal."""
+    if view not in {"completion", "survival", "both"}:
+        raise ValueError(f"unknown graph view: {view}")
+    records = _progress_records(run_dir)
+    x_field = ("environment_steps"
+               if all(record.get("environment_steps") is not None for record in records)
+               else "episode")
+    x_label = "environment decisions" if x_field == "environment_steps" else "episodes"
+    rows = []
+    for record in records:
+        stage, name = _evaluated_stage(record)
+        rows.append((int(record[x_field]), name, stage))
+
+    chosen = (("completion", "C", "Completion / clear"),
+              ("survival", "S", "Survival"))
+    if view != "both":
+        chosen = tuple(item for item in chosen if item[0] == view)
+    series = []
+    for metric, symbol, label in chosen:
+        values = [(step, _rate(stage, metric)) for step, _, stage in rows]
+        values = [(step, value) for step, value in values if value is not None]
+        if values:
+            series.append((metric, symbol, label, values))
+    if not series:
+        raise SystemExit(f"evaluation log has no {view} values")
+
+    # Braille cells are a portable 2x4 dot matrix, giving substantially more resolution
+    # than one ASCII character per sample without requiring terminal-specific image support.
+    chart_w = max(24, width - 9)
+    chart_h = max(6, min(30, height))
+    pixel_w, pixel_h = chart_w * 2, chart_h * 4
+    layers = [[[0 for _ in range(chart_w)] for _ in range(chart_h)] for _ in range(3)]
+    point_marks = [[set() for _ in range(chart_w)] for _ in range(chart_h)]
+    min_x = min(step for _, _, _, values in series for step, _ in values)
+    max_x = max(step for _, _, _, values in series for step, _ in values)
+    span = max(1, max_x - min_x)
+    all_rates = [value for _, _, _, values in series for _, value in values]
+    min_rate, max_rate = min(all_rates), max(all_rates)
+    if max_rate - min_rate < 0.01:
+        midpoint = (min_rate + max_rate) / 2
+        min_rate, max_rate = max(0.0, midpoint - 0.005), min(1.0, midpoint + 0.005)
+    rate_span = max_rate - min_rate
+
+    def position(step: int, value: float) -> tuple[int, int]:
+        x = round((pixel_w - 1) * (step - min_x) / span)
+        y = round((pixel_h - 1) * (max_rate - value) / rate_span)
+        return x, y
+
+    def dot(layer: int, x: int, y: int) -> None:
+        x, y = min(max(x, 0), pixel_w - 1), min(max(y, 0), pixel_h - 1)
+        bit = ((1, 2, 4, 64) if x % 2 == 0 else (8, 16, 32, 128))[y % 4]
+        layers[layer][y // 4][x // 2] |= bit
+
+    def segment(layer: int, start: tuple[int, int], end: tuple[int, int]) -> None:
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        distance = max(abs(dx), abs(dy), 1)
+        for offset in range(distance + 1):
+            dot(layer, round(start[0] + dx * offset / distance),
+                round(start[1] + dy * offset / distance))
+
+    promotion_steps = [int(record[x_field]) for record in records if record.get("promoted")]
+    for step in promotion_steps:
+        x, _ = position(step, min_rate)
+        for y in range(pixel_h):
+            dot(2, x, y)
+
+    for layer, (_, _, _, values) in enumerate(series):
+        previous = None
+        for step, value in values:
+            point = position(step, value)
+            if previous is not None:
+                segment(layer, previous, point)
+            dot(layer, *point)
+            point_marks[point[1] // 4][point[0] // 2].add(layer)
+            previous = point
+
+    stage_changes = []
+    previous_name = None
+    for step, name, _ in rows:
+        if name != previous_name:
+            stage_changes.append((step, name))
+            previous_name = name
+    def painted(symbol: str, code: str) -> str:
+        return f"\033[{code}m{symbol}\033[0m" if color else symbol
+
+    output = [f"Asteroids training progress — {Path(run_dir).name}",
+              "  " + "   ".join(
+                  f"{painted('⣿', '34' if metric == 'completion' else '31')} {label}"
+                  for metric, _, label, _ in series)
+              + f"   {painted('●', '97')} Evaluation"
+              + f"   {painted('⣿', '32')} Promotion"]
+    for cell_y in range(chart_h):
+        rendered = []
+        for cell_x in range(chart_w):
+            masks = [layers[layer][cell_y][cell_x] for layer in range(3)]
+            bits = masks[0] | masks[1] | masks[2]
+            symbol = " " if bits == 0 else chr(0x2800 + bits)
+            present = {index for index, mask in enumerate(masks) if mask}
+            code = ("34" if present == {0} else "31" if present == {1} else
+                    "32" if present == {2} else "33" if 2 in present else "35")
+            points = point_marks[cell_y][cell_x]
+            if points:
+                symbol = "◆" if len(points) > 1 else "●"
+                code = "95" if len(points) > 1 else ("94" if 0 in points else "91")
+                if 2 in present:
+                    code = "93"
+            rendered.append(painted(symbol, code))
+        label = f"{max_rate:>6.1%} ┤" if cell_y == 0 else (
+                f"{min_rate:>6.1%} ┤" if cell_y == chart_h - 1 else "       │")
+        output.append(label + "".join(rendered))
+    promotion_axis = ["─"] * chart_w
+    for step in promotion_steps:
+        x, _ = position(step, min_rate)
+        promotion_axis[x // 2] = "P"
+    output.append("       └" + "".join(promotion_axis))
+    output.append(f"        {min_x:,}–{max_x:,} {x_label}")
+    current_stage = rows[-1][1]
+    for metric, symbol, label, values in series:
+        current_values = [(step, _rate(stage, metric)) for step, name, stage in rows
+                          if name == current_stage and _rate(stage, metric) is not None]
+        first, last = current_values[0][1], current_values[-1][1]
+        output.append(f"  {symbol} {label}: {first:.1%} → {last:.1%} "
+                      f"({(last - first) * 100:+.1f} pp; {len(current_values)} evaluations "
+                      f"on {current_stage})")
+    output.append(f"  Stage: {current_stage}")
+    if promotion_steps:
+        promotion_labels = []
+        for step in promotion_steps[-4:]:
+            index = next(i for i, row in enumerate(rows) if row[0] == step)
+            old_name = rows[index][1]
+            next_name = next((name for _, name, _ in rows[index + 1:] if name != old_name),
+                             old_name)
+            promotion_labels.append(f"{step:,} → {next_name}")
+        output.append("  P " + ", ".join(promotion_labels))
+    return "\n".join(output)
+
+
 def _focused_rate_graph(records: list[dict], run_dir: str | Path, x_field: str,
                         x_label: str, view: str) -> str:
-    selected = (("completion", "Completion", "#2563eb"),
+    selected = (("completion", "Completion / clear", "#2563eb"),
                 ("survival", "Survival", "#dc2626"))
     if view != "both":
         selected = tuple(item for item in selected if item[0] == view)
@@ -108,13 +260,7 @@ def _focused_rate_graph(records: list[dict], run_dir: str | Path, x_field: str,
 
 def plot_progress(run_dir: str | Path, output: str | Path, view: str = "both") -> Path:
     """Write a dependency-free SVG of frozen held-out evaluation metrics."""
-    source = Path(run_dir) / "evaluation.jsonl"
-    if not source.exists():
-        raise SystemExit(f"no evaluation log found at {source}")
-    records = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines()
-               if line.strip()]
-    if not records:
-        raise SystemExit(f"evaluation log is empty: {source}")
+    records = _progress_records(run_dir)
     if view not in {"completion", "survival", "both", "all"}:
         raise ValueError(f"unknown graph view: {view}")
     curriculum = "stages" in records[0]

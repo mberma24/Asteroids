@@ -540,14 +540,20 @@ python -m asteroid_survival train \
 ```
 
 Runs contain `training.jsonl`, frozen `evaluation.jsonl`, resumable checkpoints and replay,
-and `curriculum_state.json`. Generate `progress.svg` with:
+and `curriculum_state.json`. Print held-out progress directly in the terminal with:
 
 ```bash
 ./run.sh graph models/my-run                 # completion + survival on one graph
 ./run.sh graph models/my-run completion      # completion only
 ./run.sh graph models/my-run survival        # survival only
-./run.sh graph models/my-run all             # legacy four-panel report
+GRAPH_HEIGHT=30 ./run.sh graph models/my-run # taller chart
 ```
+
+The completion line is the percentage of held-out episodes that finish the round; survival
+is the average fraction of the time limit reached. The Braille plot auto-zooms its percentage
+axis to the observed range. `P` and a green vertical guide mark each actual promotion, making
+an intentional step down on a harder round distinguishable from regression within one round.
+Bright dots are actual held-out measurements; the finer Braille strokes connect them.
 
 Every evaluation saves a matching checkpoint and prints a command for watching it. Watch an
 exact checkpoint, or let the run directory select its best held-out checkpoint:
