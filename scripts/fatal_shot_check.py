@@ -8,7 +8,7 @@ the same prediction for every other shot taken.
 
 Usage: python scripts/fatal_shot_check.py CHECKPOINT SEEDS WORKERS [CURRICULUM]
 """
-import json, math, statistics, sys
+import json, math, os, statistics, sys
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 
@@ -48,8 +48,12 @@ def run(seed):
         action = env.actions[action_index]
         # The simulator rotates before it fires, so ask about the heading the shot actually
         # leaves along, not the one the ship is sitting at when the decision is made.
+        # FC_TURN_ZERO asks the cheaper question the observation block can actually answer
+        # without evaluating every firing action: what a shot straight ahead would do.
+        straight = os.environ.get("FC_TURN_ZERO") == "1"
         prediction = (env.simulation.fire_consequence(
-            env.agent_id, turn=action.turn, thrust=action.thrust,
+            env.agent_id, turn=0.0 if straight else action.turn,
+            thrust=False if straight else action.thrust,
             within_frames=env.frame_skip) if action.fire else None)
         obs, _, terminated, truncated, info = env.step(action_index)
         fired = any(e.kind == "projectile_fired" and e.detail == env.agent_id
