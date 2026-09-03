@@ -185,6 +185,7 @@ with `./run.sh patterns survival-v3 52` and the number keys.
 | 0 | `spiral` | loops that widen from nothing out to full size |
 | - | `brownian` | an aimless wander, no shape and no rhythm |
 | = | `tumble` | never repeats and never settles: always turning, never the same turn |
+| \\ | `orbit` | circles a centre point that travels with it, looping as it crosses |
 | L | linear | dead straight, no pattern at all |
 
 `tumble` is new, **not yet in any curriculum, and deliberately outside the default pool**.

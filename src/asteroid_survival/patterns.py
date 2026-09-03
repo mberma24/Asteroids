@@ -89,6 +89,10 @@ _NOISE_SCALE = 1.0 / math.sqrt(1.0 + ALONG_SHARE ** 2)
 along/lateral excursion inside `amplitude` exactly as `_BROWNIAN_SCALE` does."""
 
 
+ORBIT_RATE = 2.0
+"""Turns `orbit` makes per pattern period. Its peak speed is exactly `rate * amplitude * w`,
+so this cannot go above `PEAK_SPEED_FACTOR` without invalidating the observation scaling."""
+
 _NOISE_GAIN = 3.0
 """Lifts the layered noise before `tanh` bounds it, so the path covers real ground.
 
@@ -309,6 +313,22 @@ def pattern_offset(name: str, t: float, amplitude: float, frequency: float, phas
         return (a * _NOISE_SCALE * ALONG_SHARE * along,
                 a * _NOISE_SCALE * ALONG_SHARE * along_velocity,
                 a * _NOISE_SCALE * lateral, a * _NOISE_SCALE * lateral_velocity)
+
+    if name == "orbit":
+        # A true circle around a centre that travels with the rock, rather than a swing to
+        # one side of it. `arc`, `corkscrew` and `spiral` all use `_loop`, whose `1 - cos`
+        # deliberately keeps the whole circle on one side of the drift line so the excursion
+        # stays inside the amplitude; the cost is that they read as bulges rather than orbits.
+        # This one is centred, so the rock genuinely goes round and round as it crosses.
+        #
+        # It loops visibly -- the path crossing itself, the rock briefly travelling backwards
+        # -- only when the tangential speed beats the forward drift, `amplitude * rate * w >
+        # speed`. That is why it is dealt extra reach at spawn like `tumble`: at the round's
+        # own amplitude it would be a wide bulge, not an orbit.
+        angle = ORBIT_RATE * x
+        spin = ORBIT_RATE * w
+        return (a * math.cos(angle), -a * spin * math.sin(angle),
+                a * math.sin(angle), a * spin * math.cos(angle))
 
     if name == "spiral":
         # Loops that widen from nothing to the configured amplitude and then hold. The cap

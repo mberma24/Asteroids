@@ -18,7 +18,7 @@ every such ladder and strands its checkpoints -- which is exactly what happened 
 was first added to it.
 """
 
-EXPERIMENTAL_PATTERNS = ("tumble",)
+EXPERIMENTAL_PATTERNS = ("tumble", "orbit")
 """Implemented and playable, but not in the default pool and not yet in any curriculum.
 
 A ladder opts one of these in by naming it explicitly, which changes that ladder's task hash
@@ -27,7 +27,7 @@ and nothing else's.
 
 KNOWN_PATTERNS = PATTERN_NAMES + EXPERIMENTAL_PATTERNS
 
-PATTERN_REACH = {"tumble": 3.0}
+PATTERN_REACH = {"tumble": 3.0, "orbit": 2.2}
 """Per-pattern multiplier on the amplitude a rock is dealt at spawn. Default 1.0.
 
 `amplitude` is one budget shared by every pattern in a round, and at the amplitudes the

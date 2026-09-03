@@ -191,7 +191,7 @@ def simulate(config: GameConfig, seed: int, max_steps: int | None) -> int:
 
 
 PATTERN_KEYS = ("sine", "zigzag", "sawtooth", "s_curve", "serpentine", "lane_change",
-                "arc", "corkscrew", "figure_eight", "spiral", "brownian", "tumble")
+                "arc", "corkscrew", "figure_eight", "spiral", "brownian", "tumble", "orbit")
 """Pattern per number key: 1 through 9, then 0, minus, equals. L is plain linear."""
 
 PATTERN_NOTES = {
@@ -207,6 +207,7 @@ PATTERN_NOTES = {
     "spiral": "loops that widen from nothing out to full size",
     "brownian": "an aimless wander, no shape and no rhythm",
     "tumble": "never repeats and never settles: always turning, never the same turn",
+    "orbit": "circles a centre point that travels with it, looping as it crosses",
     "linear": "dead straight, no pattern at all",
 }
 """Plain-language labels for a human watching, not used by anything the agent reads."""
