@@ -1,0 +1,136 @@
+# Survival v3, rounds 1-27. Physically identical to rl-survival-v2-detfrag.toml over the same
+# rounds: every ramp constant, gate and reward below is copied from it verbatim, and
+# `test_survival_v3_rounds_1_to_27_are_the_detfrag_ladder_unchanged` pins that.
+#
+# It exists only so that rl-survival-v3.toml can `extends` it and append rounds 28-96 with a
+# different ramp. `stepped()` is one straight line per [progression] block, and a phase can
+# only override patterns, sizes and linear probability -- never speed, amplitude or period --
+# so a second linear segment is the only way to change those slopes part-way up the ladder.
+# This is the mechanism configs/rl-nonlinear.toml already uses.
+[curriculum]
+base_config = "rl-arcade-detfrag.toml"
+retention_sample = 3
+promotion_completion = 0.90
+promotion_clear_rate = 0.75
+retention_completion = 0.75
+retention_floor = 0.50
+promotion_accuracy = 0.05
+promotion_streak = 2
+promotion_window = 4
+promotion_pool = true
+current_stage_probability = 0.80
+evaluation_episodes = 64
+retention_evaluation_episodes = 8
+evaluation_panels = 4
+test_evaluation_episodes = 128
+# v9 appends two corrected difficulty inputs. The v3 ladder runs past the clamps on the v5
+# `amplitude_max / 200` and `wavelength_max / 6` features, which would otherwise make its
+# last twenty-odd rounds indistinguishable to the policy.
+observation_version = 9
+
+[reward]
+survival_bonus = 0.10
+round_clear = 10.0
+death_penalty = 5.0
+large = 0.6
+medium = 0.3
+small = 0.15
+miss_penalty = 0.02
+accuracy = 0.0
+wave_clear = 0.0
+fast_clear = 0.0
+active_time_penalty = 0.0
+timeout_penalty = 0.0
+time_scaled_survival = true
+safety_progress = 0.02
+
+[progression]
+rounds = 27
+name_prefix = "survival-v3-round"
+survival = true
+patterns = []
+linear_probability = 1.0
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 26.0
+min_speed_step = 1.05263
+max_speed_start = 38.0
+max_speed_step = 1.66316
+amplitude_min_start = 0.0
+amplitude_min_step = 0.12632
+amplitude_max_start = 0.0
+amplitude_max_step = 1.68421
+wavelength_min_start = 4.8
+wavelength_min_step = -0.03579
+wavelength_max_start = 6.0
+wavelength_max_step = -0.03789
+spawn_interval_start = 2.0
+spawn_interval_step = -0.01316
+spawn_spread_start = 170.0
+spawn_spread_step = -1.53684
+initial_asteroids_start = 8.0
+initial_asteroids_step = 0.12632
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+
+[[progression.phases]]
+until = 2
+patterns = []
+linear_probability = 1
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 6
+patterns = ["sine"]
+linear_probability = 0.5
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 10
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = "small"
+
+[[progression.phases]]
+until = 12
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "small", "medium"]
+
+[[progression.phases]]
+until = 14
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "small", "medium", "medium"]
+
+[[progression.phases]]
+until = 16
+patterns = ["sine", "arc", "s_curve"]
+linear_probability = 0.25
+asteroid_size = ["small", "medium", "medium", "medium"]
+
+[[progression.phases]]
+until = 22
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change"]
+linear_probability = 0.142857
+asteroid_size = "medium"
+
+[[progression.phases]]
+until = 25
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "medium", "large"]
+
+# Rounds 26-27. v2's equivalent phase runs to 28; round 28 opens the v3 tier instead and
+# repeats this composition there, so the mix is unchanged across the seam.
+[[progression.phases]]
+until = 27
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large", "large"]

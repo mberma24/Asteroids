@@ -40,6 +40,11 @@ MODES: dict[str, Mode] = {
                      curriculum="configs/rl-endless.toml"),
     "survival-v2": Mode("survival-v2", "nonlinear-first survival v2 round",
                         curriculum="configs/rl-survival-v2.toml"),
+    # From round 28 the pattern, not the speed, is what grows: amplitude roughly doubles
+    # against v2 and the period lengthens instead of shortening, so a rock traces one big arc
+    # rather than vibrating across the arena. Rounds 1-27 are v2's, unchanged.
+    "survival-v3": Mode("survival-v3", "survival v3, expressive patterns from round 28",
+                        curriculum="configs/rl-survival-v3.toml"),
     # Rounds 97-100 mix slow rocks back into the late-game distribution, so this mode is
     # how the overfitting check is played, watched, or scored.
     "varied": Mode("varied", "survival v2 plus the varied overfitting rounds",

@@ -188,8 +188,8 @@ cmd_showdown() {      # you + greedy + the best compatible model, in any mode
     ${CHECKPOINT:+--checkpoint "$CHECKPOINT"} ${ANY_RUN:+--any-run}
 }
 
-is_mode() { case "$1" in arcade|endless|round|survival|survival-v2|varied) return 0 ;; *) return 1 ;; esac; }
-mode_takes_round() { case "$1" in round|survival|survival-v2|varied) return 0 ;; *) return 1 ;; esac; }
+is_mode() { case "$1" in arcade|endless|round|survival|survival-v2|survival-v3|varied) return 0 ;; *) return 1 ;; esac; }
+mode_takes_round() { case "$1" in round|survival|survival-v2|survival-v3|varied) return 0 ;; *) return 1 ;; esac; }
 
 # Scored, controlled runs. Unlike showdown these are not a shared arena, so the numbers are
 # comparable; showdown ships help each other by clearing the same rocks.
@@ -1139,6 +1139,7 @@ Modes -- every play/showdown/watch/compare command takes the same four:
   round N           nonlinear curriculum round, 1-48
   survival N        survival ladder round, 1-96
   survival-v2 N     nonlinear-first survival ladder, 1-96
+  survival-v3 N     expressive patterns from round 28, 1-96
   varied N          survival v2 plus varied rounds 97-100, 1-100
 
 Play
@@ -1180,7 +1181,7 @@ Inspect
   ./run.sh test-team CHECKPOINT score a shared team policy (SHIPS/LEVEL overrides)
   ./run.sh play-team CHECKPOINT watch N copies of the shared actor (SHIPS/LEVEL)
   ./run.sh test-ppo CHECKPOINT [ROUND]  run the untouched 128-seed PPO test panel
-  ./run.sh rounds survival-v2   print every round's exact difficulty
+  ./run.sh rounds MODE          print every round's exact difficulty (survival-v2, survival-v3, ...)
 
 Overrides (environment variables)
   SEED=11           starting seed

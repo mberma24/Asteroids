@@ -1,6 +1,7 @@
-# Survival v2 round reference
+# Survival round reference
 
-This documents **`configs/rl-survival-v2.toml`**. Do not confuse it with
+This documents **`configs/rl-survival-v2.toml`**. For the newer ladder, whose rounds 28-96
+grow the pattern instead of the speed, see "Survival v3" at the bottom. Do not confuse it with
 `configs/rl-endless.toml`, documented under "Endless survival ladder" in `README.md`:
 that one is also 96 rounds but flies straight until round 39, whereas this one introduces
 sine at round 3.
@@ -34,7 +35,8 @@ curve. The share falls only because the pool grows.
 | 53–82 | all eleven nonlinear patterns | 8.3% | 75% large / 25% medium |
 | 83–96 | all eleven nonlinear patterns | 8.3% | random mixed size |
 
-Every numeric control changes linearly each round from round 1 to round 96:
+Every numeric control changes linearly each round from round 1 to round 96. (Survival v3
+breaks this into two segments; see below.)
 
 | Control | Round 1 | Round 96 |
 |---|---:|---:|
@@ -97,3 +99,52 @@ Play or score them with the `varied` mode:
 A policy that has genuinely learned to read asteroids should lose only a little here. One
 that has memorised the late-game distribution will fall off a cliff -- which is the number
 this check exists to produce.
+
+
+---
+
+## Survival v3: expressive patterns from round 28
+
+`configs/rl-survival-v3.toml`, played and scored as the `survival-v3` mode. Rounds 1-27 are
+`rl-survival-v2-detfrag.toml`'s, unchanged and inherited via `extends`; rounds 28-96 are a
+second linear segment whose `_start` values are v2's round-28 values to five decimals, so
+there is no step at the seam.
+
+**Why it exists.** v2 raises late difficulty mostly by making rocks faster and making them
+oscillate faster. Measured on the simulator, that does not read as shaped motion: by round 96
+a rock's sideways swing speed is 1.77x its forward speed on a 1.9-second period, so it
+vibrates across the arena rather than tracing a path. At round 27, where training actually
+sits, the mean swing is 24px, about one medium asteroid across.
+
+**What changes.** Three slopes, and nothing else. Spawn interval, spread and opening count
+keep v2's slopes and land on v2's round-96 values.
+
+| Control | v2 round 28 -> 96 | v3 round 28 -> 96 |
+|---|---|---|
+| Asteroid base speed | 54-83 -> 126-196 | 54-83 -> **90-140** (half the growth) |
+| Pattern amplitude | 3-45 -> 12-160 | 3-45 -> **56-280** (about twice) |
+| Pattern period | 3.83-4.98s -> 1.4-2.4s | 3.83-4.98s -> **5.40-6.60s** (grows, not shrinks) |
+
+**Measured, ten episodes per round.** "0.5s error" is how far a rock lands from where its
+current velocity says it will be half a second later, which is the horizon the agent acts on.
+Reproduce with `python scripts/pattern_expression.py configs/rl-survival-v3.toml 28,52,96`.
+
+| round | mean swing | 0.5s error, p90 |
+|---:|---:|---:|
+| 28 (both ladders) | 25 px | 11 px |
+| 52 v2 / v3 | 47 / **77** px | 28 / **24** px |
+| 96 v2 / v3 | 84 / **168** px | 144 / **33** px |
+
+**The trade, stated plainly.** v3's rocks trace roughly twice the shape, and its top rounds
+are markedly *more* predictable than v2's -- round 96 sits near v2's round 52 on the error
+measure. Motion difficulty also flattens above about round 64, because amplitude and period
+grow together and their ratio is what sets curvature. Above that point the added difficulty
+is rock size, count and spawn rate, which v3 does not change. That was the deliberate choice:
+a rock that traces one big arc beats a rock that buzzes.
+
+**Observation v9.** v3 runs past two clamps in the v5 difficulty block -- `amplitude_max/200`
+pins from round 73 and `wavelength_max/6` from round 71 -- which would make its last
+twenty-odd rounds read as one identical round. v9 appends rescaled copies (`/300` and `/8`)
+rather than editing the v5 inputs, so existing weights keep their meaning and a v8 checkpoint
+widens in at zero weight. `wavelength_min` is deliberately not duplicated: it tops out at
+5.4s and never reaches its own clamp.

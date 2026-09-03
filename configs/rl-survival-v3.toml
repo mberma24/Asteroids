@@ -1,0 +1,94 @@
+# Survival v3: from round 28 the ladder gets harder by expressing the pattern, not by going
+# faster. Rounds 1-27 are inherited unchanged from rl-survival-v3-foundation.toml.
+#
+# Why. Measured on the simulator, v2's late rounds do not read as shaped motion. By round 96
+# a rock's sideways swing speed is 1.77x its forward speed on a 1.9s period, so it vibrates
+# across the arena rather than tracing a path; and at round 27, where training actually sits,
+# the mean swing is 24px, about one medium asteroid across, so the motion is nearly straight
+# over any horizon the agent can act on.
+#
+# So three slopes change here and nothing else does. Forward speed grows at half its old
+# rate, amplitude grows about twice as fast, and the period grows instead of shrinking. Spawn
+# interval, spread and opening count keep v2's slopes and land on v2's round-96 values.
+#
+#   round      speed      amplitude       period    mean swing   swing/forward
+#      28    54-83        3-45        3.83-4.98        24 px         0.51
+#      52    67-103      22-128       4.39-5.55        75 px         1.12
+#      96    90-140      56-280       5.40-6.60       168 px         1.53
+#
+# The trade, stated rather than discovered later: the top of this ladder is more legible than
+# v2's. Half-second linear prediction error at round 96 is a p90 of 33px against v2's 144px,
+# which puts it near v2's round 52. Above that point the added difficulty is rock size, count
+# and spawn rate, which this file does not touch. That was the deliberate choice: a rock that
+# traces one big arc beats a rock that buzzes.
+#
+# Every `_start` below is v2's value at round 28 to five decimals, so the ladder is
+# continuous across the seam. `extends` appends stages and does not inherit [progression],
+# so every knob has to be restated here -- including `spawn_safe_radius` and
+# `spawn_safe_seconds`, which are the only two that silently default to zero and would
+# disable the spawn clearance guard entirely.
+[curriculum]
+extends = "rl-survival-v3-foundation.toml"
+
+[progression]
+rounds = 69
+name_prefix = "survival-v3-round"
+survival = true
+patterns = []
+linear_probability = 1.0
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 54.42101
+min_speed_step = 0.52631
+max_speed_start = 82.90532
+max_speed_step = 0.83158
+amplitude_min_start = 3.41064
+amplitude_min_step = 0.77337
+amplitude_max_start = 45.47367
+amplitude_max_step = 3.44892
+# Positive, unlike every other ladder in this project: the period grows so the shape has room
+# to be seen. Max steps faster than min, so wavelength_max >= wavelength_min holds throughout.
+wavelength_min_start = 3.83367
+wavelength_min_step = 0.02303
+wavelength_max_start = 4.97697
+wavelength_max_step = 0.02387
+spawn_interval_start = 1.64468
+spawn_interval_step = -0.01316
+spawn_spread_start = 128.50532
+spawn_spread_step = -1.53684
+initial_asteroids_start = 11.41064
+initial_asteroids_step = 0.12632
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+
+# `until` counts this file's own rounds, not the ladder's: round = 27 + until. So 1 is round
+# 28, 25 is round 52, 55 is round 82, 69 is round 96. The composition boundaries are v2's.
+[[progression.phases]]
+until = 1
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large", "large"]
+
+[[progression.phases]]
+until = 25
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "large"
+
+[[progression.phases]]
+until = 55
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["large", "large", "large", "medium"]
+
+[[progression.phases]]
+until = 69
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = "mixed"

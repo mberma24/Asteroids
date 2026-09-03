@@ -30,6 +30,7 @@ GLOBAL_FEATURES = 16
 POSITION_FEATURES = 4
 COLLISION_THREAT_FEATURES = 10
 FIRE_CONSEQUENCE_FEATURES = 10
+DIFFICULTY_SCALE_FEATURES = 2
 SHIP_FEATURES = 7
 MOBILE_SHIP_FEATURES = 11
 
@@ -41,7 +42,8 @@ def global_feature_count(observation_version: int) -> int:
     return (GLOBAL_FEATURES
             + (POSITION_FEATURES if observation_version >= 6 else 0)
             + (COLLISION_THREAT_FEATURES if observation_version >= 7 else 0)
-            + (FIRE_CONSEQUENCE_FEATURES if observation_version >= 8 else 0))
+            + (FIRE_CONSEQUENCE_FEATURES if observation_version >= 8 else 0)
+            + (DIFFICULTY_SCALE_FEATURES if observation_version >= 9 else 0))
 
 
 def collision_prediction(delta: Vec2, rvx: float, rvy: float,
@@ -395,6 +397,20 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                 min(1.0, fire_consequence.worst_at / (lifetime + 1.0)),
                 math.sin(fire_consequence.bearing), math.cos(fire_consequence.bearing),
             ))
+    if version >= 9:
+        # Two of the v5 difficulty inputs clamp, and the survival-v3 ladder runs past both:
+        # `amplitude_max / 200` pins from round 73 and `wavelength_max / 6` from round 71, so
+        # the last quarter of that ladder would read as one identical round. Appended rather
+        # than rescaled in place, exactly as v7 did to the threat block, so the v5 inputs keep
+        # the meaning every existing weight was trained on.
+        #
+        # `wavelength_min` is deliberately absent: it tops out at 5.4 on that ladder and never
+        # reaches its /6 clamp, so a second copy would be redundant.
+        difficulty = config.asteroid.difficulty_at(state.elapsed)
+        values.extend((
+            min(1.0, difficulty.amplitude_max / 300.0),
+            min(1.0, difficulty.wavelength_max / 8.0),
+        ))
     return np.asarray(values, dtype=np.float32)
 
 
