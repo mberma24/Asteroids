@@ -76,3 +76,59 @@ def test_adding_the_knob_left_every_existing_task_hash_alone():
     config = spec.stages[25].game_config(spec.base)
     from asteroid_survival.rl.curriculum import _specified
     assert "fragment_motion" not in _specified(config)["asteroid"]
+
+
+def _round26_env():
+    spec = load_curriculum("configs/rl-survival-v2-detfrag.toml")
+    return spec.stages[25].game_config(spec.base)
+
+
+def test_fire_consequence_matches_actually_firing():
+    """Checked against the simulator, not against itself.
+
+    The intersection solve extrapolates the rock linearly, so it is exact for a point-blank
+    shot and degrades as the flight lengthens and curvature accumulates. Measured over 813
+    predictions on round 26: 100% correct under 0.2s, 94-97% out to 0.6s. The regime that
+    matters is the short one -- the shots whose fragments kill the ship land in well under
+    half a second -- so that is what this pins.
+    """
+    from asteroid_survival.actions import Action
+
+    config = _round26_env()
+    checked = correct = close_ok = close_total = 0
+    for seed in (10000, 10001, 10002):
+        sim = Simulation(config)
+        sim.reset(seed)
+        for _ in range(240):
+            if sim.terminated or sim.truncated:
+                break
+            ship = next(s for s in sim._ships if s.id == "agent")
+            prediction = sim.fire_consequence("agent") if ship.cooldown <= 0 else None
+            if prediction is not None:
+                fork = copy.deepcopy(sim)
+                struck = None
+                for frame in range(int(round(prediction.time_to_hit * 60)) + 3):
+                    if fork.terminated or fork.truncated:
+                        break
+                    result = fork.step({"agent": Action.FIRE if frame == 0 else Action.NOOP})
+                    struck = struck or next(
+                        (int(event.entity_id) for event in result.events
+                         if event.kind == "asteroid_shot" and event.detail == "agent"), None)
+                checked += 1
+                correct += struck == prediction.target_id
+                if prediction.time_to_hit <= 0.2:
+                    close_total += 1
+                    close_ok += struck == prediction.target_id
+            sim.step({"agent": Action.NOOP})
+    assert checked > 100, f"only {checked} predictions exercised"
+    assert close_total > 20, f"only {close_total} point-blank predictions exercised"
+    assert close_ok == close_total, f"point-blank agreement {close_ok}/{close_total}"
+    assert correct / checked > 0.90, f"overall agreement {correct}/{checked}"
+
+
+def test_a_shot_is_not_predicted_while_the_weapon_is_cooling():
+    config = _round26_env()
+    sim = Simulation(config)
+    sim.reset(10000)
+    next(s for s in sim._ships if s.id == "agent").cooldown = 0.2
+    assert sim.fire_consequence("agent") is None

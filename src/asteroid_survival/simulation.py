@@ -307,7 +307,7 @@ class Simulation:
         offset = wrapped_delta(ship.pos, hit_pos, w, h)
         bearing = math.atan2(offset.y, offset.x) - ship.angle
         return FireConsequence(
-            time_to_hit=best_time, distance=wrapped_delta(ship.pos, hit_pos, w, h).length(),
+            time_to_hit=best_time, target_id=best_rock.id, distance=offset.length(),
             size=best_rock.size, splits=splits, bearing=bearing,
             worst_clearance=worst_clearance, worst_at=worst_at, closing=worst_closing)
 
