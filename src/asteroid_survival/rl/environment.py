@@ -29,6 +29,7 @@ TEAMMATE_FEATURES = 11
 GLOBAL_FEATURES = 16
 POSITION_FEATURES = 4
 COLLISION_THREAT_FEATURES = 10
+FIRE_CONSEQUENCE_FEATURES = 10
 SHIP_FEATURES = 7
 MOBILE_SHIP_FEATURES = 11
 
@@ -39,7 +40,8 @@ def global_feature_count(observation_version: int) -> int:
         return 0
     return (GLOBAL_FEATURES
             + (POSITION_FEATURES if observation_version >= 6 else 0)
-            + (COLLISION_THREAT_FEATURES if observation_version >= 7 else 0))
+            + (COLLISION_THREAT_FEATURES if observation_version >= 7 else 0)
+            + (FIRE_CONSEQUENCE_FEATURES if observation_version >= 8 else 0))
 
 
 def collision_prediction(delta: Vec2, rvx: float, rvy: float,
@@ -137,7 +139,7 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                        reveal_progress: bool = True, *, global_features: bool = False,
                        observation_version: int | None = None,
                        asteroid_context: dict[int, tuple[float, int]] | None = None,
-                       spawn_phase: float = 0.0) -> np.ndarray:
+                       spawn_phase: float = 0.0, fire_consequence=None) -> np.ndarray:
     version = (5 if global_features else 4) if observation_version is None else int(
         observation_version)
     slots = history_offsets(history_frames) if offsets is None else offsets
@@ -365,6 +367,34 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                            min(1.0, age / 5.0), parent_size / 3.0))
         else:
             values.extend((0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    if version >= 8:
+        # What a shot taken now would do. Every other feature here describes the world as it
+        # is; this one describes the consequence of the action the policy is choosing, which
+        # is the thing it has been getting wrong. Measured on the v12 champion over 96
+        # episodes: 93% of the shots whose fragment went on to kill it were predicted to hit
+        # it, against 3.7% of all splitting shots.
+        #
+        # Only meaningful where fragments are deterministic (`fragment_motion = "inherit"`).
+        # On a random ladder the fragment's speed and shape are redrawn at the moment of the
+        # shot and this is indicative at best.
+        if fire_consequence is None:
+            values.extend((0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0))
+        else:
+            lifetime = max(config.projectile.lifetime, 1e-6)
+            clearance = fire_consequence.worst_clearance
+            values.extend((
+                1.0,
+                min(1.0, fire_consequence.time_to_hit / lifetime),
+                min(1.0, fire_consequence.distance / diagonal),
+                fire_consequence.size / 3.0,
+                float(fire_consequence.splits),
+                # Signed, and clamped at the range where the difference stops mattering:
+                # fatal shots measured -28 to 0px, ordinary ones a median of 172px.
+                max(-1.0, min(1.0, clearance / 150.0)),
+                float(clearance <= 0.0),
+                min(1.0, fire_consequence.worst_at / (lifetime + 1.0)),
+                math.sin(fire_consequence.bearing), math.cos(fire_consequence.bearing),
+            ))
     return np.asarray(values, dtype=np.float32)
 
 
@@ -962,6 +992,12 @@ class AsteroidsRLEnv:
         bystanders. The asteroid history is shared because it is keyed by asteroid, not by
         observer.
         """
+        # Asked at the ship's current heading rather than per firing action: evaluating
+        # every one costs three times as much and measured no better, because at the ranges
+        # that kill (37-110px) one frame of rotation barely moves the answer.
+        consequence = (
+            self.simulation.fire_consequence(ship_id, within_frames=self.frame_skip)
+            if self.observation_version >= 8 else None)
         return encode_observation(
             state, ship_id, self.config, self.max_decisions, self.max_asteroids,
             self.frame_skip, self._history, self.history_frames, self.history_slots,
@@ -969,7 +1005,8 @@ class AsteroidsRLEnv:
             global_features=self.global_features,
             observation_version=self.observation_version,
             asteroid_context=self._asteroid_context,
-            spawn_phase=self.simulation.spawn_phase)
+            spawn_phase=self.simulation.spawn_phase,
+            fire_consequence=consequence)
 
     def _companion_actions(self) -> dict[str, Action]:
         """One action per companion, held for the whole frame-skip like the learner's."""

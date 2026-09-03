@@ -133,3 +133,50 @@ def test_a_shot_is_not_predicted_while_the_weapon_is_cooling():
     sim.reset(10000)
     next(s for s in sim._ships if s.id == "agent").cooldown = 0.2
     assert sim.fire_consequence("agent") is None
+
+
+def test_observation_v8_appends_the_fire_consequence_block_and_nothing_else():
+    """A v7 policy must widen into v8 with every learned input weight still aligned."""
+    from asteroid_survival.rl.environment import FIRE_CONSEQUENCE_FEATURES
+    from asteroid_survival.rl.ppo import _stage_env
+
+    layout = {"history_frames": 8, "history_long_frames": 8, "history_long_stride": 8,
+              "max_projectiles": 8}
+    older = load_curriculum("configs/rl-survival-v2-detfrag.toml")
+    newer = load_curriculum("configs/rl-survival-v2-fireaware.toml")
+    assert older.observation_version == 7 and newer.observation_version == 8
+    seven = _stage_env(older, 25, {**layout, "version": 7})
+    eight = _stage_env(newer, 25, {**layout, "version": 8})
+    assert eight.observation_size - seven.observation_size == FIRE_CONSEQUENCE_FEATURES
+    old_obs, _ = seven.reset(10000)
+    new_obs, _ = eight.reset(10000)
+    assert (old_obs == new_obs[:len(old_obs)]).all(), "v8 moved an existing input"
+    # Same stages and rewards, so the two ladders differ only in what the policy sees.
+    assert task_hash(newer) == task_hash(older)
+
+
+def test_the_fire_consequence_block_reports_a_real_prediction():
+    from asteroid_survival.rl.environment import FIRE_CONSEQUENCE_FEATURES
+    from asteroid_survival.rl.ppo import _stage_env
+
+    spec = load_curriculum("configs/rl-survival-v2-fireaware.toml")
+    env = _stage_env(spec, 25, {"history_frames": 8, "history_long_frames": 8,
+                                "history_long_stride": 8, "max_projectiles": 8,
+                                "version": 8})
+    obs, _ = env.reset(10000)
+    seen_valid = seen_blank = False
+    for _ in range(120):
+        block = obs[-FIRE_CONSEQUENCE_FEATURES:]
+        prediction = env.simulation.fire_consequence(env.agent_id,
+                                                     within_frames=env.frame_skip)
+        assert block[0] == float(prediction is not None)
+        if prediction is None:
+            seen_blank = True
+        else:
+            seen_valid = True
+            assert block[6] == float(prediction.worst_clearance <= 0.0)
+            assert -1.0 <= block[5] <= 1.0
+        obs, _, terminated, truncated, _ = env.step(8)   # FIRE
+        if terminated or truncated:
+            break
+    assert seen_valid and seen_blank, "the block never varied"

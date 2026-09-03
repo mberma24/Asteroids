@@ -1,0 +1,18 @@
+# The deterministic-fragment ladder, plus an observation that says what a shot would do.
+#
+# Everything -- stages, gates, rewards, `fragment_motion = "inherit"` -- is inherited from
+# rl-survival-v2-detfrag.toml. The only change is observation v8, which appends ten inputs
+# describing the shot the policy is about to take: what it would hit, whether that rock
+# splits, and how close the worse of the two fragments would then come to the ship.
+#
+# Why (2026-09-02): 18 of the v12 champion's 21 deaths were fragments of a rock it had just
+# shot, from 37-110px away. Replaying 96 episodes and asking `Simulation.fire_consequence`
+# at every shot, 93% of the shots whose fragment went on to kill it were predicted to hit
+# the ship, against 3.7% of all splitting shots -- so the signal separates the fatal shots
+# from the ordinary ones by a wide margin, and nothing in observation v7 carries it.
+#
+# The block is appended last, so a v7 checkpoint widens into it at zero weight and behaves
+# identically until it learns to use it. Fork with INITIALIZE_FROM, never --resume.
+[curriculum]
+extends = "rl-survival-v2-detfrag.toml"
+observation_version = 8
