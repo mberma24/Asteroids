@@ -8,6 +8,66 @@ Last updated: 2026-09-02.
 
 ---
 
+## 2026-09-02 (evening): the ladder change was necessary and not sufficient; v13 tests the observation
+
+**v12 answered.** On the deterministic-fragment ladder it promoted off round 26 at episode
+3,000, then sat on round 27 at **0.67 across 45 evaluations and 22,000 episodes**, champion
+unchanged since episode 3,500. Removing the hidden draw raised what is achievable (blind
+oracle 0.812 -> 1.000) without changing what the policy achieves. Its death mode was
+unchanged too: 18 of 21 deaths were fragments of a rock it had itself shot, 16 of them under
+a second old. The ladder made the deaths predictable; it did not make the policy predict them.
+
+**So the missing piece is the prediction itself, and it is now measured rather than argued.**
+`Simulation.fire_consequence` walks a shot to its first hit and the two resulting fragments
+out to a one-second horizon. Three things had to be got right, and the first two were wrong
+on the first attempt:
+
+- The simulator rotates the ship *before* it fires, so a shot taken with `LEFT_FIRE` leaves
+  along a heading one frame of rotation away from the one the decision was made at.
+- More importantly, `fire_cooldown` is 0.24s against a 1/60s frame, so the weapon is busy for
+  **3.6 decisions** and then comes free part-way through one. **95% of shots leave inside the
+  frame-skip window**, at a pose several frames ahead of the decision boundary. The
+  prediction now rolls the ship forward under the action being considered to the frame the
+  shot actually leaves on. Before that fix it could attribute 2 of 21 deaths; after it, 17.
+
+Pinned against the simulator rather than against itself
+(`test_fire_consequence_matches_actually_firing`): 30/31 point-blank and 236/244 overall
+predict the correct rock, and the earlier bulk check put time-to-hit error at a median 9.8ms
+and worst-fragment-clearance error at 0.7px.
+
+**The validation that justified building it**, on the v12 champion over 96 episodes:
+
+```
+                                        n     median clearance   predicted to hit the ship
+every splitting shot                 2636          156 px                  4.0%
+the shots whose fragment killed it     17          -12 px                 88.2%
+```
+
+Asked at a fixed heading instead of per firing action -- the cheaper question an observation
+block can actually answer -- it is 93.3% against 3.7%, so the three-variant version was not
+worth 3x the compute. One call costs 56us, about 3.4% of the decision budget.
+
+**Observation v8** appends ten inputs after the v7 threat block: whether a shot is possible
+this decision, what it would hit, at what range and size, whether that rock splits, the
+signed worst-case fragment clearance and a flag for whether it is a predicted hit, when that
+happens, and the target's bearing. Appended last and zero-weighted on transfer, so
+`configs/rl-survival-v2-fireaware.toml` is the detfrag ladder with nothing else altered and
+a v7 checkpoint widens into it unchanged. 269 tests pass.
+
+**`models/oracle-survival-v2-v13-fireaware`** is running: v12's champion, same ladder, same
+rung, observation the only difference ("transferred a narrower policy, zero-filling 10 new
+inputs across 2 layers"). **v12's round-27 curve is the control** -- 0.67 flat over 22,000
+episodes -- so anything above that which holds is the observation earning its place.
+
+Stated in advance, so this cannot be read after the fact: the block is worth keeping if
+round 27 clears materially above 0.70 and `scripts/fatal_shot_check.py` shows the share of
+shots taken while a hit is predicted falling. If round 27 is still ~0.67 at 20,000 episodes
+with that share unchanged, the policy cannot use an explicit consequence either, and the
+remaining honest options are search at inference or a different architecture -- not another
+feature.
+
+---
+
 ## 2026-09-02 (later): deterministic fragments lift the reactive ceiling to 1.0; v12 launched
 
 `AsteroidConfig.fragment_motion = "inherit"`: a split rock's pieces keep the parent's pattern,
