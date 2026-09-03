@@ -527,6 +527,14 @@ cmd_test_ppo() {
   $PY -m asteroid_survival evaluate "${args[@]}"
 }
 
+cmd_patterns() {     # watch trajectory shapes with no ship; keys switch every rock at once
+  if [ -n "${1:-}" ]; then
+    $PY -m asteroid_survival patterns --mode "$1" ${2:+--round "$2"}
+  else
+    $PY -m asteroid_survival patterns
+  fi
+}
+
 cmd_rounds() {
   local mode="${1:-survival-v2}"
   $PY - "$mode" <<'PYEOF'
@@ -1182,6 +1190,7 @@ Inspect
   ./run.sh play-team CHECKPOINT watch N copies of the shared actor (SHIPS/LEVEL)
   ./run.sh test-ppo CHECKPOINT [ROUND]  run the untouched 128-seed PPO test panel
   ./run.sh rounds MODE          print every round's exact difficulty (survival-v2, survival-v3, ...)
+  ./run.sh patterns [MODE] [N]  watch one trajectory shape at a time, no ship
 
 Overrides (environment variables)
   SEED=11           starting seed
@@ -1269,6 +1278,7 @@ case "$command" in
   play-team)           cmd_play_team "$@" ;;
   test-ppo)            cmd_test_ppo "$@" ;;
   rounds)              cmd_rounds "${1:-survival-v2}" ;;
+  patterns)            cmd_patterns "$@" ;;
   ppo-screen)  cmd_ppo_screen "${1:-10000}" ;;
   continue)    cmd_continue "$@" ;;
   finish)      cmd_finish "$@" ;;

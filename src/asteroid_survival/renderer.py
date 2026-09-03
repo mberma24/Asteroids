@@ -15,8 +15,12 @@ RED = (241, 75, 75)
 
 
 class Renderer:
-    def __init__(self, pygame, width: int, height: int, *, trails: bool = False):
+    def __init__(self, pygame, width: int, height: int, *, trails: bool = False,
+                 show_ships: bool = True):
         self.pg = pygame
+        # The pattern viewer has no pilot: it is there to watch trajectories, and a ship on
+        # screen only invites reading them as threats.
+        self.show_ships = show_ships
         # Trails and per-asteroid labels are for inspecting trajectory shapes. A shape is
         # very hard to judge from a moving dot; the path it has already flown is the thing
         # worth looking at.
@@ -82,7 +86,8 @@ class Renderer:
             image = self.font.render(text, True, color if alive else (120, 128, 148))
             surface.blit(image, (18, top + 26 + row * 24))
 
-    def draw(self, state: WorldSnapshot, paused: bool = False) -> None:
+    def draw(self, state: WorldSnapshot, paused: bool = False,
+             notes: tuple[str, ...] = ()) -> None:
         pg, surface = self.pg, self.logical
         self._update_scores(state)
         surface.fill(BG)
@@ -110,7 +115,7 @@ class Renderer:
             pg.draw.circle(surface, WHITE, (int(projectile.x), int(projectile.y)), int(projectile.radius))
         colors = (CYAN, (176, 117, 255), (101, 223, 137), (255, 219, 100))
         for i, ship in enumerate(state.ships):
-            if not ship.alive:
+            if not ship.alive or not self.show_ships:
                 continue
             direction = (math.cos(ship.angle), math.sin(ship.angle))
             side = (-direction[1], direction[0])
@@ -124,13 +129,23 @@ class Renderer:
             surface.blit(label, label.get_rect(center=(ship.x, ship.y - ship.radius - 14)))
         alive = sum(s.alive for s in state.ships)
         wave = f"WAVE {state.wave}    " if state.wave else ""
-        hud = (f"{wave}TIME {state.elapsed:7.1f}s    SHIPS {alive}/{len(state.ships)}"
-               f"    ASTEROIDS {len(state.asteroids)}")
+        hud = (f"{wave}TIME {state.elapsed:7.1f}s"
+               + (f"    SHIPS {alive}/{len(state.ships)}" if self.show_ships else "")
+               + f"    ASTEROIDS {len(state.asteroids)}")
         if state.objective.enabled:
             hud += f"    OBJECT HP {max(0, state.objective.health)}"
         surface.blit(self.font.render(hud, True, WHITE), (18, 16))
-        surface.blit(self.font.render("P pause  |  R restart  |  Esc quit", True, (130, 143, 169)), (18, 46))
-        if state.difficulty is not None:
+        if notes:
+            # Caller-supplied status lines, used by the pattern viewer for the pattern name
+            # and the knobs it is changing live.
+            for row, line in enumerate(notes):
+                colour = CYAN if row == 0 else (150, 162, 188)
+                font = self.big if row == 0 else self.font
+                surface.blit(font.render(line, True, colour), (18, 44 + row * 30))
+        else:
+            surface.blit(self.font.render(
+                "P pause  |  R restart  |  Esc quit", True, (130, 143, 169)), (18, 46))
+        if state.difficulty is not None and not notes:
             # Endless runs get harder invisibly; show the knobs that are actually moving.
             d = state.difficulty
             tier = "" if d.tier is None else f"TIER {d.tier}    "
@@ -138,7 +153,7 @@ class Renderer:
                     f"    CAP {d.active_cap}    SWING {d.amplitude_max:.0f}"
                     f"    SPREAD {d.spawn_spread:.0f}\u00b0")
             surface.blit(self.font.render(ramp, True, ORANGE), (18, 76))
-        if len(state.ships) > 1:
+        if len(state.ships) > 1 and self.show_ships:
             self._draw_scoreboard(
                 surface, state, colors, top=112 if state.difficulty is not None else 82)
         if paused or state.terminated or state.truncated:

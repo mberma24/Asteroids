@@ -190,6 +190,126 @@ def simulate(config: GameConfig, seed: int, max_steps: int | None) -> int:
     return 0
 
 
+PATTERN_KEYS = ("sine", "zigzag", "sawtooth", "s_curve", "serpentine", "lane_change",
+                "arc", "corkscrew", "figure_eight", "spiral", "brownian", "linear")
+"""Pattern per number key, 1 through 9 then 0 then minus, ending on plain linear."""
+
+
+def watch_patterns(config: GameConfig, seed: int, *, trails: bool = True,
+                   start: str | None = None) -> int:
+    """Watch one round's asteroids with every rock flying the same pattern.
+
+    There is no ship. Picking a pattern re-runs the round from the same seed, so rocks spawn
+    in the same places at the same speeds and only their trajectory shape differs -- which is
+    the only way to see that the eleven really are different, because at the amplitudes the
+    curriculum uses most of them read as one gentle wave.
+    """
+    try:
+        import pygame
+    except ImportError as exc:
+        raise SystemExit("Pygame is required. Run: pip install -e .") from exc
+    from .renderer import Renderer
+
+    pygame.init()
+    # Nothing is flying the ship, so nothing should be able to die and end the run.
+    config.ship.invulnerable = True
+    config.objective.max_steps = None
+    pool = list(config.asteroid.pattern_pool)
+    base = {"amplitude_min": config.asteroid.amplitude_min,
+            "amplitude_max": config.asteroid.amplitude_max,
+            "wavelength_min": config.asteroid.wavelength_min,
+            "wavelength_max": config.asteroid.wavelength_max,
+            "min_speed": config.asteroid.min_speed, "max_speed": config.asteroid.max_speed}
+    scale = {"amplitude": 1.0, "period": 1.0, "speed": 1.0}
+    chosen: str | None = start         # None means the round's own mixture
+
+    def apply() -> None:
+        rock = config.asteroid
+        rock.amplitude_min = base["amplitude_min"] * scale["amplitude"]
+        rock.amplitude_max = base["amplitude_max"] * scale["amplitude"]
+        rock.wavelength_min = base["wavelength_min"] * scale["period"]
+        rock.wavelength_max = base["wavelength_max"] * scale["period"]
+        rock.min_speed = base["min_speed"] * scale["speed"]
+        rock.max_speed = base["max_speed"] * scale["speed"]
+        if chosen is None:
+            rock.motion_mode = "pool"
+            rock.pattern_pool = list(pool)
+        else:
+            rock.motion_mode = "specific"
+            rock.specific_pattern = chosen
+
+    sim = Simulation(config)
+    apply()
+    state = sim.reset(seed)
+    renderer = Renderer(pygame, config.arena.width, config.arena.height,
+                        trails=trails, show_ships=False)
+    clock, paused, running = pygame.time.Clock(), False, True
+    while running:
+        restart = False
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or (
+                    event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                running = False
+            elif event.type == pygame.VIDEORESIZE:
+                renderer.resize(event.w, event.h)
+            elif event.type == pygame.KEYDOWN:
+                key, index = event.key, None
+                if pygame.K_1 <= key <= pygame.K_9:
+                    index = key - pygame.K_1
+                elif key == pygame.K_0:
+                    index = 9
+                elif key in (pygame.K_MINUS, pygame.K_UNDERSCORE):
+                    index = 10
+                elif key == pygame.K_EQUALS:
+                    index = 11
+                if index is not None and index < len(PATTERN_KEYS):
+                    chosen, restart = PATTERN_KEYS[index], True
+                elif key == pygame.K_m:
+                    chosen, restart = None, True
+                elif key in (pygame.K_RIGHT, pygame.K_LEFT):
+                    step = 1 if key == pygame.K_RIGHT else -1
+                    here = -1 if chosen is None else PATTERN_KEYS.index(chosen)
+                    chosen = PATTERN_KEYS[(here + step) % len(PATTERN_KEYS)]
+                    restart = True
+                elif key in (pygame.K_UP, pygame.K_DOWN):
+                    scale["amplitude"] *= 1.25 if key == pygame.K_UP else 1 / 1.25
+                    restart = True
+                elif key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
+                    scale["period"] *= 1 / 1.15 if key == pygame.K_LEFTBRACKET else 1.15
+                    restart = True
+                elif key in (pygame.K_COMMA, pygame.K_PERIOD):
+                    scale["speed"] *= 1 / 1.15 if key == pygame.K_COMMA else 1.15
+                    restart = True
+                elif key == pygame.K_t:
+                    renderer.trails = not renderer.trails
+                elif key == pygame.K_p:
+                    paused = not paused
+                elif key == pygame.K_r:
+                    scale.update(amplitude=1.0, period=1.0, speed=1.0)
+                    restart = True
+        if restart:
+            apply()
+            state = sim.reset(seed)
+            paused = False
+        if not paused and not state.terminated and not state.truncated:
+            state = sim.step({ship.id: Action.NOOP for ship in config.ships}).snapshot
+        rock = config.asteroid
+        swing = (rock.amplitude_min + rock.amplitude_max) / 2
+        period = (rock.wavelength_min + rock.wavelength_max) / 2
+        speed = (rock.min_speed + rock.max_speed) / 2
+        stretch = (speed * period) / swing if swing > 0.5 else float("inf")
+        renderer.draw(state, paused, notes=(
+            (chosen or "mixed pool").upper(),
+            f"swing {swing:.0f}px    period {period:.2f}s    speed {speed:.0f}px/s"
+            + (f"    stretch {stretch:.1f}:1" if stretch != float("inf") else ""),
+            "1-9 0 - =  pattern    M mixed    < >  cycle    Up/Down swing",
+            "[ ] period    , . speed    T trails    P pause    R reset    Esc quit",
+        ))
+        clock.tick(config.arena.fps)
+    pygame.quit()
+    return 0
+
+
 def play(config: GameConfig, seed: int, checkpoint: Path | None = None, *,
          trails: bool = False, all_runs: bool = False) -> int:
     try:
@@ -311,8 +431,12 @@ def main(argv: list[str] | None = None) -> int:
     patterns_parser = sub.add_parser(
         "patterns", help="watch trajectory shapes with motion trails and labels")
     patterns_parser.add_argument(
-        "pattern", nargs="?", help="one pattern to watch; omit to see them all mixed")
+        "pattern", nargs="?", help="pattern to start on; omit to start on the mixed pool")
     patterns_parser.add_argument("--seed", type=int, default=3)
+    patterns_parser.add_argument(
+        "--mode", choices=sorted(MODES),
+        help="watch a curriculum round's real asteroids instead of the slow showcase arena")
+    patterns_parser.add_argument("--round", type=int, help="round number, with --mode")
     best_parser = sub.add_parser(
         "best-checkpoint", help="print the best checkpoint a mode can load")
     best_parser.add_argument("mode", nargs="?", default="arcade", choices=sorted(MODES))
@@ -570,12 +694,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"playing {label} | seed {args.seed}")
         return play(config, args.seed, args.checkpoint, all_runs=args.any_run)
     if args.command == "patterns":
+        from .config import PATTERN_NAMES
         from .modes import pattern_showcase
 
-        config, label = pattern_showcase(args.pattern)
+        if args.pattern is not None and args.pattern not in PATTERN_NAMES:
+            raise SystemExit(f"unknown pattern: {args.pattern}; "
+                             f"choose from {', '.join(PATTERN_NAMES)}")
+        if args.mode:
+            config, label = build_mode(args.mode, args.round)
+        else:
+            config, label = pattern_showcase(None)
+            label = "the showcase arena"
         print(f"watching {label} | seed {args.seed}")
-        print("the ship cannot be destroyed here; fly around and watch the paths")
-        return play(config, args.seed, trails=True)
+        print("no ship: press 1-9, 0, -, = to put every rock on one pattern, M for the mix")
+        return watch_patterns(config, args.seed, start=args.pattern)
     if args.command == "best-checkpoint":
         config, _ = build_mode(args.mode, args.round)
         algorithms = {name for name in args.algorithms.split(",") if name}
