@@ -143,15 +143,15 @@ def test_closest_controller_aims_without_thrust():
 
 
 def test_pattern_showcase_is_safe_and_shows_unsplit_paths():
-    from asteroid_survival.config import PATTERN_NAMES
+    from asteroid_survival.config import KNOWN_PATTERNS
     from asteroid_survival.modes import pattern_showcase
 
     config, label = pattern_showcase()
     assert config.ship.invulnerable is True          # it is for watching, not playing
     assert config.asteroid.spawn_size == 1           # small rocks never split into clutter
     assert config.asteroid.motion_mode == "pool"
-    assert set(config.asteroid.pattern_pool) == set(PATTERN_NAMES)
-    assert str(len(PATTERN_NAMES)) in label
+    assert set(config.asteroid.pattern_pool) == set(KNOWN_PATTERNS)
+    assert str(len(KNOWN_PATTERNS)) in label
 
     single, label = pattern_showcase("corkscrew")
     assert single.asteroid.motion_mode == "specific"

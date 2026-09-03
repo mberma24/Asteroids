@@ -191,7 +191,7 @@ def simulate(config: GameConfig, seed: int, max_steps: int | None) -> int:
 
 
 PATTERN_KEYS = ("sine", "zigzag", "sawtooth", "s_curve", "serpentine", "lane_change",
-                "arc", "corkscrew", "figure_eight", "spiral", "brownian", "gust")
+                "arc", "corkscrew", "figure_eight", "spiral", "brownian", "tumble")
 """Pattern per number key: 1 through 9, then 0, minus, equals. L is plain linear."""
 
 PATTERN_NOTES = {
@@ -206,7 +206,7 @@ PATTERN_NOTES = {
     "figure_eight": "a real figure eight, crossing its own path",
     "spiral": "loops that widen from nothing out to full size",
     "brownian": "an aimless wander, no shape and no rhythm",
-    "gust": "glides almost straight, then swerves wide, on no schedule",
+    "tumble": "never repeats and never settles: always turning, never the same turn",
     "linear": "dead straight, no pattern at all",
 }
 """Plain-language labels for a human watching, not used by anything the agent reads."""
@@ -715,12 +715,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"playing {label} | seed {args.seed}")
         return play(config, args.seed, args.checkpoint, all_runs=args.any_run)
     if args.command == "patterns":
-        from .config import PATTERN_NAMES
+        from .config import KNOWN_PATTERNS
         from .modes import pattern_showcase
 
-        if args.pattern is not None and args.pattern not in PATTERN_NAMES:
+        if args.pattern is not None and args.pattern not in KNOWN_PATTERNS:
             raise SystemExit(f"unknown pattern: {args.pattern}; "
-                             f"choose from {', '.join(PATTERN_NAMES)}")
+                             f"choose from {', '.join(KNOWN_PATTERNS)}")
         if args.mode:
             config, label = build_mode(args.mode, args.round)
         else:

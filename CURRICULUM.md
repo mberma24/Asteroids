@@ -184,14 +184,25 @@ with `./run.sh patterns survival-v3 52` and the number keys.
 | 9 | `figure_eight` | a real figure eight, crossing its own path |
 | 0 | `spiral` | loops that widen from nothing out to full size |
 | - | `brownian` | an aimless wander, no shape and no rhythm |
-| = | `gust` | glides almost straight, then swerves wide, on no schedule |
+| = | `tumble` | never repeats and never settles: always turning, never the same turn |
 | L | linear | dead straight, no pattern at all |
 
-`gust` is new and **not yet in any curriculum**. Every other pattern holds a roughly steady
-swing, so a policy can learn "this rock oscillates about this much" and lead it. `gust` gives
-no such handle: an envelope built from two slow terms at an irrational ratio means a
-full-amplitude swerve needs both to crest at once, which happens on no schedule. Measured
-across three phases it glides within 15% of straight 39% of the time and reaches past 70% of
-full amplitude 8% of the time, where a sine is at 10% and 51%. It stays inside its amplitude
-(47.1 of a 51 bound), peaks at 1.24x `amplitude x frequency` against the 3.0 ceiling, and its
-closest resemblance to any existing pattern is 0.517 against a 0.75 near-duplicate limit.
+`tumble` is new, **not yet in any curriculum, and deliberately outside the default pool**.
+`pattern_pool` is part of the task hash and defaults to `PATTERN_NAMES`, so appending to that
+tuple restates the task of every ladder that names no patterns of its own and strands its
+checkpoints. It lives in `EXPERIMENTAL_PATTERNS` instead; a ladder opts in by naming it. It is the only pattern here that is not
+built from sines. The other ten curved shapes are sums or warps of trigonometric terms, which
+makes them smooth and quasi-periodic; `tumble` is value noise, a repeatable random number per
+cell of time, smoothly interpolated and layered over four octaves whose rates sit at an
+irrational ratio so they never line up. The per-cell values come from an integer hash rather
+than from `sin` of a large argument, so a seed means bit-for-bit the same episode on the
+training box and on a laptop.
+
+The slowest octave carries most of the weight, and a gain with a `tanh` limit lifts the
+typical swing, because a pattern that shivers in place is the easiest thing in the pool to
+survive. Measured: it sits a median 68% of its amplitude off the centreline against a sine's
+64%, reaches 96% of amplitude, and changes direction 0.90 times a second against a sine's
+0.50. Correlating one ten-minute window against the next gives 0.07, where a sine gives 1.00,
+so it genuinely does not repeat. It stays inside its amplitude (47.9 of a 51 bound), peaks at
+1.44x `amplitude x frequency` against the 3.0 ceiling, and its closest resemblance to any
+existing pattern is 0.437 against a 0.75 near-duplicate limit.

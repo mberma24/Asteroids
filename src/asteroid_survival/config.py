@@ -8,8 +8,24 @@ from typing import Any
 
 PATTERN_NAMES = (
     "sine", "zigzag", "sawtooth", "arc", "s_curve", "lane_change",
-    "serpentine", "corkscrew", "figure_eight", "spiral", "brownian", "gust",
+    "serpentine", "corkscrew", "figure_eight", "spiral", "brownian",
 )
+"""The standard pool, and the default for any config that does not name its own.
+
+Deliberately frozen. A curriculum that leaves `pattern_pool` unset inherits this tuple, and
+the pool is part of the task hash, so appending a name here silently restates the task of
+every such ladder and strands its checkpoints -- which is exactly what happened when `tumble`
+was first added to it.
+"""
+
+EXPERIMENTAL_PATTERNS = ("tumble",)
+"""Implemented and playable, but not in the default pool and not yet in any curriculum.
+
+A ladder opts one of these in by naming it explicitly, which changes that ladder's task hash
+and nothing else's.
+"""
+
+KNOWN_PATTERNS = PATTERN_NAMES + EXPERIMENTAL_PATTERNS
 
 
 @dataclass(slots=True)
@@ -301,7 +317,7 @@ class GameConfig:
             raise ValueError("motion_mode must be linear, specific, or pool")
         names = ([self.asteroid.specific_pattern] if self.asteroid.motion_mode == "specific"
                  else self.asteroid.pattern_pool if self.asteroid.motion_mode == "pool" else [])
-        unknown = set(names) - set(PATTERN_NAMES)
+        unknown = set(names) - set(KNOWN_PATTERNS)
         if unknown:
             raise ValueError(f"unknown asteroid patterns: {sorted(unknown)}")
         if self.asteroid.motion_mode == "pool" and not names:

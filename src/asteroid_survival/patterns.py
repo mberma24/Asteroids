@@ -60,11 +60,8 @@ _BROWNIAN_SCALE = (1.0 / math.sqrt(1.0 + _BROWNIAN_ALONG ** 2)) / sum(
     1.0 / (_BROWNIAN_BASE * GOLDEN ** index) for index in range(_BROWNIAN_TERMS))
 """1/f component weights, normalised so along and lateral together stay inside amplitude."""
 
-GUST_FLOOR = 0.12
-"""Smallest share of its amplitude `gust` ever swings, so a glide still drifts."""
-
 ALONG_SHARE = 0.55
-"""How much of `gust`'s swerve runs along the direction of travel rather than across it.
+"""How much of `tumble`'s motion runs along the direction of travel rather than across it.
 
 Kept under one for the same reason `brownian` keeps its own share low: motion along the
 drift axis cancels forward progress, and a rock that never closes cannot threaten. It also
@@ -80,6 +77,62 @@ that (``serpentine`` and ``lane_change`` are the fastest, at about 2.6x). Observ
 normalisation needs this, otherwise the fastest patterns saturate the velocity feature.
 Measured by ``test_pattern_peak_speeds_stay_within_the_declared_factor``.
 """
+
+
+_NOISE_OCTAVES = 4
+_NOISE_BASE = 1.6
+"""Cells of the slowest octave per pattern period; the others are golden-ratio multiples."""
+_NOISE_WEIGHTS = tuple(w / sum(0.5 ** i for i in range(_NOISE_OCTAVES))
+                       for w in (0.5 ** i for i in range(_NOISE_OCTAVES)))
+_NOISE_SCALE = 1.0 / math.sqrt(1.0 + ALONG_SHARE ** 2)
+"""Weights sum to one and each octave is bounded by one, so this keeps the combined
+along/lateral excursion inside `amplitude` exactly as `_BROWNIAN_SCALE` does."""
+
+
+_NOISE_GAIN = 3.0
+"""Lifts the layered noise before `tanh` bounds it, so the path covers real ground.
+
+At 3.0 the rock sits a median 68% of its amplitude off the centreline, which is about what a
+sine manages (2/pi = 64%), and reaches 96% of it. Lower and it shrinks into a `brownian`-style
+wander that covers nothing; agitation that covers nothing was measured to be the easiest thing
+in the pool to survive."""
+
+
+def _limit(value: float, velocity: float) -> tuple[float, float]:
+    """Squash into [-1, 1] smoothly, carrying the derivative through."""
+    squashed = math.tanh(value)
+    return squashed, (1.0 - squashed * squashed) * velocity
+
+
+def _hash_unit(cell: int, seed: int) -> float:
+    """A repeatable value in [-1, 1] for one cell of time.
+
+    Integer arithmetic throughout, deliberately. The usual shader trick of taking the
+    fractional part of `sin(n * 12.9898) * 43758.5453` is not bit-identical across libm
+    implementations, and this project requires that a seed reproduce the same episode on the
+    training box and on a laptop.
+    """
+    x = (cell * 0x9E3779B1 + seed * 0x85EBCA77) & 0xFFFFFFFF
+    x ^= x >> 15
+    x = (x * 0x2C1B3C6D) & 0xFFFFFFFF
+    x ^= x >> 12
+    x = (x * 0x297A2D39) & 0xFFFFFFFF
+    x ^= x >> 15
+    return x / 0x7FFFFFFF - 1.0
+
+
+def _value_noise(u: float, seed: int) -> tuple[float, float]:
+    """One octave of smoothly interpolated per-cell noise, and its slope in `u`.
+
+    Smoothstep rather than linear interpolation, so the velocity is continuous: a corner in
+    the path is fine, a jump in speed is a rock teleporting.
+    """
+    cell = math.floor(u)
+    f = u - cell
+    low = _hash_unit(cell, seed)
+    high = _hash_unit(cell + 1, seed)
+    smooth = f * f * (3.0 - 2.0 * f)
+    return low + (high - low) * smooth, (high - low) * 6.0 * f * (1.0 - f)
 
 
 def _triangle(x: float) -> tuple[float, float]:
@@ -216,39 +269,46 @@ def pattern_offset(name: str, t: float, amplitude: float, frequency: float, phas
         return (a * math.sin(x), a * w * math.cos(x),
                 a * 0.5 * math.sin(2 * x), a * w * math.cos(2 * x))
 
-    if name == "gust":
-        # Long, nearly straight glides broken by sudden wide swerves at times that never
-        # repeat. Every other pattern here holds a roughly steady swing, so a policy can
-        # learn "this rock oscillates about this much" and lead it; this one offers no such
-        # handle, because the rock looks linear right up until it does not.
+    if name == "tumble":
+        # Never the same twice and never still: the rock is always turning, and the turns
+        # come at no fixed rate and no fixed size.
         #
-        # Two pieces. A carrier whose timing is warped by an incommensurate term, so the
-        # swings themselves land off any beat -- that much it shares with `serpentine`. And,
-        # unlike anything else, an *envelope*: two slow peaked terms at an irrational ratio,
-        # multiplied, so a full-amplitude swerve needs both to crest at once and therefore
-        # arrives on no schedule. Between crests the envelope is near zero and the rock
-        # glides. The swerve carries along-track motion a quarter-phase out, so it curls
-        # into the turn rather than sliding flat across it.
-        rate, warp = 1.05, 0.7
-        u = rate * x + warp * math.sin(rate * x / GOLDEN)
-        du = rate * w * (1 + warp * math.cos(rate * x / GOLDEN) / GOLDEN)
-        first, second = 0.47, 0.47 / GOLDEN
-        crest = 0.5 * (1 + math.sin(first * x))
-        other = 0.5 * (1 + math.sin(second * x + 2.4))
-        d_crest = 0.5 * first * w * math.cos(first * x)
-        d_other = 0.5 * second * w * math.cos(second * x + 2.4)
-        # A floor under the envelope, so a glide is a lull rather than a dead straight line
-        # and the rock is never briefly a different pattern. Measured over three phases: it
-        # glides within 15% of straight about a third of the time and reaches past 70% of
-        # full amplitude about a tenth, where a sine is at 10% and 51%.
-        envelope = GUST_FLOOR + (1 - GUST_FLOOR) * crest * other
-        d_envelope = (1 - GUST_FLOOR) * (d_crest * other + crest * d_other)
-        swing, d_swing = math.sin(u), math.cos(u) * du
-        curl, d_curl = math.cos(u), -math.sin(u) * du
-        return (a * ALONG_SHARE * (envelope * curl),
-                a * ALONG_SHARE * (d_envelope * curl + envelope * d_curl),
-                a * (envelope * swing),
-                a * (d_envelope * swing + envelope * d_swing))
+        # Not another sum of sines. `brownian` is that, and a sum of sines is smooth,
+        # quasi-periodic, and stays small -- measured, it reaches only 72% of its amplitude
+        # and reads as a gentle wander. This is value noise: a deterministic random number
+        # per cell of time, smoothly interpolated, layered over four octaves whose rates sit
+        # at an irrational ratio so they never line up. The slowest octave carries most of
+        # the weight, which is what makes the path cover ground rather than shiver in place
+        # -- agitation was measured to be the *easiest* thing to survive, so the difficulty
+        # here has to come from large displacement that keeps changing its mind.
+        #
+        # The per-cell values come from an integer hash, not from `sin` of a large argument,
+        # so a seed means bit-for-bit the same episode on every machine.
+        seed = int(phase * 1_000_003) & 0xFFFF
+        along = along_velocity = lateral = lateral_velocity = 0.0
+        for index in range(_NOISE_OCTAVES):
+            cells = _NOISE_BASE * GOLDEN ** index
+            weight = _NOISE_WEIGHTS[index]
+            rate = cells / (2 * math.pi)          # cells per radian of x
+            value, slope = _value_noise(rate * x, seed + index * 101)
+            lateral += weight * value
+            lateral_velocity += weight * slope * rate * w
+            value, slope = _value_noise(rate * x + 37.5, seed + index * 101 + 8191)
+            along += weight * value
+            along_velocity += weight * slope * rate * w
+        # Raw layered noise reaches only about 70% of its amplitude, because independent
+        # octaves rarely crest together -- the same weakness that makes `brownian` a gentle
+        # wander. Gain lifts the typical swing and `tanh` keeps it bounded, which also flattens
+        # the peaks, so the rock holds a wide deflection instead of touching it and leaving.
+        lateral, lateral_velocity = _limit(_NOISE_GAIN * lateral, _NOISE_GAIN * lateral_velocity)
+        along, along_velocity = _limit(_NOISE_GAIN * along, _NOISE_GAIN * along_velocity)
+        # The along-track share is applied after the limit, not before: each axis is now
+        # bounded by one, so the pair is bounded by sqrt(1 + share^2), which `_NOISE_SCALE`
+        # divides straight back out. Applying it earlier let both axes saturate to full
+        # amplitude at once and the excursion reached 110% of its bound.
+        return (a * _NOISE_SCALE * ALONG_SHARE * along,
+                a * _NOISE_SCALE * ALONG_SHARE * along_velocity,
+                a * _NOISE_SCALE * lateral, a * _NOISE_SCALE * lateral_velocity)
 
     if name == "spiral":
         # Loops that widen from nothing to the configured amplitude and then hold. The cap

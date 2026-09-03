@@ -93,11 +93,11 @@ def pattern_showcase(pattern: str | None = None) -> tuple[GameConfig, str]:
     watch paths, and a field of fragments obscures them. Amplitude is large and speed low so
     a full period of each shape is visible while it crosses the arena.
     """
-    from .config import PATTERN_NAMES
+    from .config import KNOWN_PATTERNS
 
-    if pattern is not None and pattern not in PATTERN_NAMES:
+    if pattern is not None and pattern not in KNOWN_PATTERNS:
         raise SystemExit(
-            f"unknown pattern: {pattern}; choose from {', '.join(PATTERN_NAMES)}")
+            f"unknown pattern: {pattern}; choose from {', '.join(KNOWN_PATTERNS)}")
     config = load_config(_project_path("configs/solo.toml"))
     config.ship.invulnerable = True
     asteroid = config.asteroid
@@ -112,8 +112,9 @@ def pattern_showcase(pattern: str | None = None) -> tuple[GameConfig, str]:
     asteroid.wavelength_min, asteroid.wavelength_max = 3.2, 4.2
     if pattern is None:
         asteroid.motion_mode = "pool"
-        asteroid.pattern_pool = list(PATTERN_NAMES)
-        label = f"all {len(PATTERN_NAMES)} patterns"
+        # The showcase exists to look at shapes, so it shows the experimental ones too.
+        asteroid.pattern_pool = list(KNOWN_PATTERNS)
+        label = f"all {len(KNOWN_PATTERNS)} patterns"
     else:
         asteroid.motion_mode = "specific"
         asteroid.specific_pattern = pattern

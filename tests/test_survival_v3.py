@@ -100,3 +100,77 @@ def test_the_v9_inputs_never_saturate_on_this_ladder():
     assert top.amplitude_max / 300.0 < 1.0 and top.wavelength_max / 8.0 < 1.0
     # ...and the v5 originals really do clamp up there, which is why this block exists.
     assert top.amplitude_max / 200.0 > 1.0 and top.wavelength_max / 6.0 > 1.0
+
+
+def test_tumble_is_playable_but_out_of_the_default_pool():
+    """A new pattern must not restate the task of every ladder that names no patterns.
+
+    `pattern_pool` is part of the task hash and defaults to `PATTERN_NAMES`, so appending to
+    that tuple silently changes the task of every curriculum relying on the default and
+    strands its checkpoints. `tumble` therefore sits outside it until a ladder opts in.
+    """
+    from asteroid_survival.config import (EXPERIMENTAL_PATTERNS, KNOWN_PATTERNS,
+                                          PATTERN_NAMES, GameConfig)
+
+    assert "tumble" in EXPERIMENTAL_PATTERNS and "tumble" in KNOWN_PATTERNS
+    assert "tumble" not in PATTERN_NAMES
+    assert list(GameConfig().asteroid.pattern_pool) == list(PATTERN_NAMES)
+    # It is still a legal thing to ask a config for.
+    config = GameConfig()
+    config.asteroid.motion_mode = "pool"
+    config.asteroid.pattern_pool = ["tumble", "sine"]
+    config.validate()
+
+
+def test_tumble_covers_ground_instead_of_shivering():
+    """Agitation that covers nothing was measured to be the easiest thing in the pool."""
+    import math
+    import statistics
+
+    from asteroid_survival.patterns import pattern_offset
+
+    amplitude, frequency = 50.0, 2 * math.pi / 4.0
+    offsets, turns, previous = [], 0, None
+    for step in range(30000):
+        _, _, lateral, lateral_velocity = pattern_offset(
+            "tumble", step * 0.002, amplitude, frequency, 1.1)
+        offsets.append(abs(lateral))
+        rising = lateral_velocity > 0
+        turns += previous is not None and rising != previous
+        previous = rising
+    # A sine sits 64% off the centreline and turns 0.5 times a second. This has to hold its
+    # own on displacement while changing direction more often.
+    assert statistics.fmean(offsets) / amplitude > 0.45
+    assert turns / 60 > 0.7
+
+
+def test_tumble_never_repeats():
+    import math
+    import statistics
+
+    from asteroid_survival.patterns import pattern_offset
+
+    def correlation(name):
+        track = [pattern_offset(name, i * 0.01, 50.0, 2 * math.pi / 4.0, 1.1)[2]
+                 for i in range(60000)]
+        half = len(track) // 2
+        first, second = track[:half], track[half:2 * half]
+        mean_a, mean_b = statistics.fmean(first), statistics.fmean(second)
+        top = sum((a - mean_a) * (b - mean_b) for a, b in zip(first, second))
+        bottom = math.sqrt(sum((a - mean_a) ** 2 for a in first)
+                           * sum((b - mean_b) ** 2 for b in second)) or 1.0
+        return top / bottom
+
+    assert correlation("sine") > 0.99          # the check detects a period when there is one
+    assert abs(correlation("tumble")) < 0.25
+
+
+def test_tumble_is_the_same_episode_on_every_machine():
+    """Value noise from an integer hash, not from sin() of a large argument."""
+    from asteroid_survival.patterns import _hash_unit, pattern_offset
+
+    assert _hash_unit(12345, 7) == _hash_unit(12345, 7)
+    assert _hash_unit(12345, 7) != _hash_unit(12346, 7)
+    assert -1.0 <= _hash_unit(999, 3) <= 1.0
+    first = pattern_offset("tumble", 3.25, 50.0, 2.0, 1.1)
+    assert pattern_offset("tumble", 3.25, 50.0, 2.0, 1.1) == first
