@@ -6,7 +6,7 @@ with the trailing block replaced by the value the encoder writes when it has not
 report. If the two agree episode for episode, the block is not reaching the policy's
 decisions yet, whatever its weights look like.
 
-Usage: python scripts/ablate_block.py CHECKPOINT SEEDS WORKERS CURRICULUM [WIDTH]
+Usage: python scripts/ablate_block.py CHECKPOINT SEEDS WORKERS CURRICULUM [WIDTH] [STAGE]
 """
 import json, os, statistics, sys
 from concurrent.futures import ProcessPoolExecutor
@@ -20,7 +20,7 @@ from asteroid_survival.rl.ppo import _stage_env, PPOController
 CKPT = sys.argv[1]
 CURRICULUM = sys.argv[4]
 WIDTH = int(sys.argv[5]) if len(sys.argv) > 5 else 10
-STAGE = 26
+STAGE = int(sys.argv[6]) if len(sys.argv) > 6 else 26
 _META = json.load(open(os.path.join(CKPT, "metadata.json")))
 LAYOUT = dict(_META.get("observation_layout") or {})
 for _key, _default in (("history_frames", 8), ("history_long_frames", 8),
