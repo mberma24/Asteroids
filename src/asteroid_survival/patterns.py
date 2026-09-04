@@ -89,9 +89,16 @@ _NOISE_SCALE = 1.0 / math.sqrt(1.0 + ALONG_SHARE ** 2)
 along/lateral excursion inside `amplitude` exactly as `_BROWNIAN_SCALE` does."""
 
 
-ORBIT_RATE = 2.0
-"""Turns `orbit` makes per pattern period. Its peak speed is exactly `rate * amplitude * w`,
-so this cannot go above `PEAK_SPEED_FACTOR` without invalidating the observation scaling."""
+ORBIT_RATE = 1.0
+"""Turns `orbit` makes per pattern period. Its peak speed is exactly `rate * amplitude * w`.
+
+Was 2.0, chosen so the loops read clearly, which was a mistake: tangential speed *is* the
+loop condition, so tuning for a crisp loop tuned the rock's speed up with it. At 2.0 an orbit
+rock crossed round 29 at a median 167px/s where every other pattern managed 73-80 and the
+round's own drift was 55-84 -- a round-60 rock arriving at round 29, and worth 8 points of
+clear rate on its own. At 1.0 the circle is the same size and still outruns the drift (83
+against 69 at round 29, so it still loops), at half the speed.
+"""
 
 _NOISE_GAIN = 3.0
 """Lifts the layered noise before `tanh` bounds it, so the path covers real ground.

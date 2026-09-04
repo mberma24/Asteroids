@@ -80,6 +80,16 @@ patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "cork
 linear_probability = 0.0833333
 asteroid_size = ["medium", "medium", "large", "large"]
 
+# Rounds 29-30. Round 28 is half large rocks and round 29 was all of them at once, which is
+# the composition cliff the team ladder needed eight bridge rounds for. Measured on the v14
+# champion, that step alone cost 8 points of clear rate, and stacked with `orbit` arriving on
+# the same round the pair cost 24. Three quarters large first, then all of them at round 31.
+[[progression.phases]]
+until = 3
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = ["medium", "large", "large", "large"]
+
 [[progression.phases]]
 until = 25
 patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]

@@ -45,9 +45,11 @@ def test_the_seam_at_round_28_matches_the_v2_ladder_exactly():
 
 def test_the_composition_boundaries_are_where_v2_puts_them():
     v3 = _v3()
-    sizes = {n: v3.stages[n - 1].asteroid_size for n in (28, 29, 52, 53, 82, 83, 96)}
+    sizes = {n: v3.stages[n - 1].asteroid_size for n in (28, 29, 30, 31, 52, 53, 82, 83, 96)}
     assert sizes[28] == [2, 2, 3, 3]
-    assert sizes[29] == sizes[52] == 3
+    # Rounds 29-30 bridge the step to all-large rather than taking it in one round.
+    assert sizes[29] == sizes[30] == [2, 3, 3, 3]
+    assert sizes[31] == sizes[52] == 3
     assert sizes[53] == sizes[82] == [3, 3, 3, 2]
     assert sizes[83] is sizes[96] is None            # mixed
 
@@ -225,17 +227,21 @@ def test_the_reach_boost_touches_only_the_pattern_it_names():
     from asteroid_survival.simulation import Simulation
 
     spec = _v3()
+    # Several seeds, because whether one episode happens to draw an orbit rock out of a
+    # thirteen-way pool is luck, and an earlier single-seed version of this broke the moment
+    # the round's rock mix changed the draw order.
     for index, boosted in ((27, set()), (28, {"orbit"})):
-        config = spec.stages[index].game_config(spec.base)
-        config.ship.invulnerable = True
-        sim = Simulation(config)
-        sim.reset(9)
         seen = set()
-        for _ in range(1200):
-            sim.step({ship.id: Action.NOOP for ship in config.ships})
-            for rock in sim._asteroids:
-                if rock.amplitude > config.asteroid.amplitude_max + 1e-6:
-                    seen.add(rock.pattern)
+        for seed in range(8):
+            config = spec.stages[index].game_config(spec.base)
+            config.ship.invulnerable = True
+            sim = Simulation(config)
+            sim.reset(seed)
+            for _ in range(1200):
+                sim.step({ship.id: Action.NOOP for ship in config.ships})
+                for rock in sim._asteroids:
+                    if rock.amplitude > config.asteroid.amplitude_max + 1e-6:
+                        seen.add(rock.pattern)
         assert seen == boosted, f"round {index + 1}: boosted {seen}, expected {boosted}"
 
 
