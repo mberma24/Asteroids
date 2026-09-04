@@ -89,15 +89,19 @@ _NOISE_SCALE = 1.0 / math.sqrt(1.0 + ALONG_SHARE ** 2)
 along/lateral excursion inside `amplitude` exactly as `_BROWNIAN_SCALE` does."""
 
 
-ORBIT_RATE = 1.0
+ORBIT_RATE = 2.0
 """Turns `orbit` makes per pattern period. Its peak speed is exactly `rate * amplitude * w`.
 
-Was 2.0, chosen so the loops read clearly, which was a mistake: tangential speed *is* the
-loop condition, so tuning for a crisp loop tuned the rock's speed up with it. At 2.0 an orbit
-rock crossed round 29 at a median 167px/s where every other pattern managed 73-80 and the
-round's own drift was 55-84 -- a round-60 rock arriving at round 29, and worth 8 points of
-clear rate on its own. At 1.0 the circle is the same size and still outruns the drift (83
-against 69 at round 29, so it still loops), at half the speed.
+Kept at 2.0 on measurement, after a plausible argument for lowering it was tested and lost.
+Orbit rocks cross round 29 far faster than anything else -- a median 167px/s against 73-80
+for every other pattern and a drift of 55-84 -- so halving the rate to slow them looked
+obvious. Scored on the same checkpoint and the same 64 held-out seeds, clear rate went 0.578
+at rate 2.0 to 0.531 at rate 1.0, and the whole grid from 57 to 249px/s of tangential speed
+landed between 0.484 and 0.578. Only rate 3.0 was clearly worse.
+
+So orbit's difficulty is its shape, not its speed: the observation's threat features
+extrapolate velocity linearly, and a circling rock's velocity direction rotates continuously,
+so the prediction is wrong no matter how slowly it turns. Retuning this knob cannot fix that.
 """
 
 _NOISE_GAIN = 3.0
