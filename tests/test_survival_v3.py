@@ -257,3 +257,83 @@ def test_orbit_is_in_every_round_from_29_on_at_an_equal_share():
         # `_pattern` draws uniformly from the pool, so equal membership is equal chance, and
         # straight is one trajectory among equals at 1 / (patterns + 1).
         assert abs(stage.linear_probability - 1 / 13) < 1e-4, f"round {index + 1}"
+
+
+def test_v10_appends_a_turning_threat_block_and_moves_nothing():
+    from asteroid_survival.rl.environment import TURNING_THREAT_FEATURES
+
+    spec = _v3()
+    nine = _stage_env(spec, 28, {**LAYOUT, "version": 9})
+    ten = _stage_env(spec, 28, {**LAYOUT, "version": 10})
+    assert ten.observation_size - nine.observation_size == TURNING_THREAT_FEATURES
+    old, new = nine.reset(10000)[0], ten.reset(10000)[0]
+    assert (old == new[:len(old)]).all(), "v10 moved an existing input"
+
+
+def test_an_arc_beats_a_straight_line_on_a_circling_rock():
+    """The whole reason the v10 block exists, checked against the simulator.
+
+    `orbit` cost 15-19 points of clear rate at every rate and reach tried, so its difficulty
+    is not a knob. It is that the threat features guess in a straight line while a circling
+    rock's heading rotates continuously.
+    """
+    import math
+    import statistics
+
+    from asteroid_survival.actions import Action
+    from asteroid_survival.math2d import Vec2, wrapped_delta
+    from asteroid_survival.rl.environment import turn_rate
+    from asteroid_survival.simulation import Simulation
+
+    spec = _v3()
+    errors = {}
+    for pattern in ("sine", "orbit"):
+        config = spec.stages[28].game_config(spec.base)
+        config.ship.invulnerable = True
+        config.asteroid.motion_mode = "specific"
+        config.asteroid.specific_pattern = pattern
+        straight, arced = [], []
+        for seed in range(3):
+            sim = Simulation(config)
+            sim.reset(seed)
+            tracks: dict[int, list] = {}
+            while not (sim.terminated or sim.truncated) and sim.step_count < 900:
+                for rock in sim._asteroids:
+                    tracks.setdefault(rock.id, []).append(
+                        (Vec2(rock.pos.x, rock.pos.y), Vec2(rock.vel.x, rock.vel.y)))
+                sim.step({ship.id: Action.NOOP for ship in config.ships})
+            for track in tracks.values():
+                for index in range(4, len(track) - 30):
+                    here, velocity = track[index]
+                    later = track[index + 30][0]
+                    straight.append(wrapped_delta(
+                        here + velocity * 0.5, later, 900, 900).length())
+                    history = [(track[index - 1][0].x, track[index - 1][0].y),
+                               (track[index - 2][0].x, track[index - 2][0].y)]
+                    rate = turn_rate(history, here, 900, 900, 1 / 60)
+                    if abs(rate) < 1e-6:
+                        guess = here + velocity * 0.5
+                    else:
+                        heading = math.atan2(velocity.y, velocity.x)
+                        radius = velocity.length() / rate
+                        guess = Vec2(
+                            here.x + radius * (math.sin(heading + rate * 0.5)
+                                               - math.sin(heading)),
+                            here.y - radius * (math.cos(heading + rate * 0.5)
+                                               - math.cos(heading)))
+                    arced.append(wrapped_delta(guess, later, 900, 900).length())
+        errors[pattern] = (statistics.median(straight), statistics.median(arced))
+    # A straight guess is already fine for a gentle wave, and badly wrong for a circle.
+    assert errors["orbit"][0] > 6 * errors["sine"][0]
+    # The arc has to fix most of that, or the block is not worth its width.
+    assert errors["orbit"][1] < 0.5 * errors["orbit"][0]
+
+
+def test_a_rock_flying_straight_gets_no_turn_rate():
+    from asteroid_survival.math2d import Vec2
+    from asteroid_survival.rl.environment import turn_rate
+
+    straight = [(100.0, 50.0), (90.0, 50.0)]
+    assert abs(turn_rate(straight, Vec2(110.0, 50.0), 900, 900, 1 / 15)) < 1e-9
+    assert turn_rate(None, Vec2(0.0, 0.0), 900, 900, 1 / 15) == 0.0
+    assert turn_rate([(1.0, 1.0)], Vec2(2.0, 2.0), 900, 900, 1 / 15) == 0.0

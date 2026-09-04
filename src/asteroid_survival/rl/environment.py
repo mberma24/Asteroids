@@ -31,6 +31,7 @@ POSITION_FEATURES = 4
 COLLISION_THREAT_FEATURES = 10
 FIRE_CONSEQUENCE_FEATURES = 10
 DIFFICULTY_SCALE_FEATURES = 2
+TURNING_THREAT_FEATURES = 8
 SHIP_FEATURES = 7
 MOBILE_SHIP_FEATURES = 11
 
@@ -43,7 +44,59 @@ def global_feature_count(observation_version: int) -> int:
             + (POSITION_FEATURES if observation_version >= 6 else 0)
             + (COLLISION_THREAT_FEATURES if observation_version >= 7 else 0)
             + (FIRE_CONSEQUENCE_FEATURES if observation_version >= 8 else 0)
-            + (DIFFICULTY_SCALE_FEATURES if observation_version >= 9 else 0))
+            + (DIFFICULTY_SCALE_FEATURES if observation_version >= 9 else 0)
+            + (TURNING_THREAT_FEATURES if observation_version >= 10 else 0))
+
+
+def turn_rate(track, position: Vec2, width: float, height: float,
+              interval: float) -> float:
+    """How fast an asteroid's heading is rotating, in radians per second.
+
+    Estimated from the last three recorded positions rather than from a velocity history,
+    because that is what the observation already keeps. Returns zero when there is not enough
+    history yet, which reduces the arc prediction below to the straight-line one.
+    """
+    if track is None or len(track) < 2:
+        return 0.0
+    recent = wrapped_delta(Vec2(*track[0]), position, width, height)
+    older = wrapped_delta(Vec2(*track[1]), Vec2(*track[0]), width, height)
+    if recent.length() < 1e-6 or older.length() < 1e-6:
+        return 0.0
+    turned = math.atan2(recent.y, recent.x) - math.atan2(older.y, older.x)
+    turned = (turned + math.pi) % (2 * math.pi) - math.pi
+    return turned / interval
+
+
+def arc_prediction(delta: Vec2, rvx: float, rvy: float, rate: float,
+                   collision_radius: float, *, horizon: float = 2.0,
+                   steps: int = 8) -> tuple[float, float]:
+    """Closest approach when the asteroid is turning at a constant rate, not flying straight.
+
+    `collision_prediction` assumes a straight line, which is what every threat feature before
+    v10 does, and it is accurate for the ten patterns whose curvature is gentle: measured on
+    round 29, a half-second straight-line guess is off by a median 0-7px for them. For `orbit`
+    it is off by 58px, more than a large asteroid and the ship put together, because a
+    circling rock's heading rotates continuously. Turning the same guess into an arc cuts that
+    to 18px.
+
+    Marched rather than solved: the closest approach on an arc has no closed form, and eight
+    steps over two seconds resolves it to well inside an asteroid's radius.
+    """
+    best_clearance, best_time = math.inf, horizon
+    for index in range(1, steps + 1):
+        moment = index * horizon / steps
+        if abs(rate) < 1e-6:
+            offset_x, offset_y = rvx * moment, rvy * moment
+        else:
+            # Rotating a constant speed about a centre `speed / rate` away.
+            heading = math.atan2(rvy, rvx)
+            radius = math.hypot(rvx, rvy) / rate
+            offset_x = radius * (math.sin(heading + rate * moment) - math.sin(heading))
+            offset_y = -radius * (math.cos(heading + rate * moment) - math.cos(heading))
+        clearance = math.hypot(delta.x + offset_x, delta.y + offset_y) - collision_radius
+        if clearance < best_clearance:
+            best_clearance, best_time = clearance, moment
+    return best_time, max(-collision_radius, best_clearance)
 
 
 def collision_prediction(delta: Vec2, rvx: float, rvy: float,
@@ -411,6 +464,48 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
             min(1.0, difficulty.amplitude_max / 300.0),
             min(1.0, difficulty.wavelength_max / 8.0),
         ))
+    if version >= 10:
+        # The same worst-threat question as the v7 block, asked of a rock that is turning.
+        # Appended rather than replacing it, because an arc guess is worse than a straight one
+        # on the patterns that turn in corners -- measured on round 29, zigzag's p90 goes 11.9
+        # to 16.5px and serpentine's 45.3 to 53.7 -- so both readings have to stay available.
+        interval = frame_skip / config.arena.fps
+        worst = None
+        for asteroid in state.asteroids:
+            here = Vec2(asteroid.x, asteroid.y)
+            delta = wrapped_delta(origin, here, state.width, state.height)
+            rate = turn_rate(history.get(asteroid.id) if history is not None else None,
+                             here, state.width, state.height, interval)
+            reach = asteroid.radius + config.ship.radius
+            if abs(rate) < 0.2:
+                # Barely turning, so the arc is its own straight line and the closed form is
+                # exact. Most rocks are in this case, and skipping the march for them is what
+                # keeps the block affordable. A rock circling at round 29 turns at 2.9 rad/s,
+                # more than ten times this threshold.
+                moment, clearance, _, _ = collision_prediction(
+                    delta, asteroid.vx - ship.vx, asteroid.vy - ship.vy, reach, horizon=2.0)
+            else:
+                moment, clearance = arc_prediction(
+                    delta, asteroid.vx - ship.vx, asteroid.vy - ship.vy, rate, reach)
+            if worst is None or clearance < worst[1]:
+                worst = (moment, clearance, delta, rate, asteroid)
+        if worst is None:
+            values.extend((0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0))
+        else:
+            moment, clearance, delta, rate, asteroid = worst
+            bearing = math.atan2(delta.y, delta.x) - ship.angle
+            straight = collision_prediction(
+                delta, asteroid.vx - ship.vx, asteroid.vy - ship.vy,
+                asteroid.radius + config.ship.radius)[1]
+            values.extend((
+                1.0, moment / 2.0, max(-1.0, min(1.0, clearance / 150.0)),
+                math.sin(bearing), math.cos(bearing),
+                float(clearance <= 0.0),
+                max(-1.0, min(1.0, rate / 6.0)),
+                # How much the turn changes the answer: near zero for a rock flying straight,
+                # large for one circling, so this is also "how much to distrust the v7 block".
+                max(-1.0, min(1.0, (straight - clearance) / 150.0)),
+            ))
     return np.asarray(values, dtype=np.float32)
 
 

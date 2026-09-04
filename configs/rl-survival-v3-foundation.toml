@@ -23,10 +23,12 @@ evaluation_episodes = 64
 retention_evaluation_episodes = 8
 evaluation_panels = 4
 test_evaluation_episodes = 128
-# v9 appends two corrected difficulty inputs. The v3 ladder runs past the clamps on the v5
-# `amplitude_max / 200` and `wavelength_max / 6` features, which would otherwise make its
-# last twenty-odd rounds indistinguishable to the policy.
-observation_version = 9
+# v9 appends two corrected difficulty inputs, because the v3 ladder runs past the clamps on
+# the v5 `amplitude_max / 200` and `wavelength_max / 6` features. v10 appends a threat block
+# that extrapolates a turning rock along an arc instead of a straight line: measured on round
+# 29, a half-second straight-line guess is off by a median 58px for `orbit` against 0-7px for
+# every other pattern, and the arc version cuts that to 18px.
+observation_version = 10
 
 [reward]
 survival_bonus = 0.10

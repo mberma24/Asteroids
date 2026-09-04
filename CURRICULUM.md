@@ -156,6 +156,21 @@ reactive policy rather than merely hard. That, more than how the motion reads, i
 to prefer v3. Its round 96 at 0.750 is exactly on the gate, so the very top is still
 marginal.
 
+**Observation v10, and why `orbit` needed it.** Orbit cost 15-19 points of clear rate at
+round 29 at every rate and reach tried, from 57 to 249 px/s of tangential speed, so its
+difficulty is not a knob. Measured on round 29, a half-second straight-line prediction is off
+by a median 58px for an orbiting rock against 0-7px for every other pattern -- more than a
+large asteroid and the ship put together -- because the threat features extrapolate velocity
+in a straight line while a circling rock's heading rotates continuously. Extrapolating along
+an arc instead cuts that to 18px.
+
+v10 appends that arc-aware threat block rather than replacing the straight-line one, because
+an arc guess is *worse* on the patterns that turn in corners: zigzag's p90 goes 11.9 to 16.5px
+and serpentine's 45.3 to 53.7. Both readings stay available, and the block's last input is the
+gap between them, which is near zero for a rock flying straight and large for one circling.
+Rocks turning slower than 0.2 rad/s take the closed form instead of an eight-step march, which
+keeps the cost near 5%.
+
 **Observation v9.** v3 runs past two clamps in the v5 difficulty block -- `amplitude_max/200`
 pins from round 73 and `wavelength_max/6` from round 71 -- which would make its last
 twenty-odd rounds read as one identical round. v9 appends rescaled copies (`/300` and `/8`)
