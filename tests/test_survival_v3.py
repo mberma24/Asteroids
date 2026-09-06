@@ -245,18 +245,36 @@ def test_the_reach_boost_touches_only_the_pattern_it_names():
         assert seen == boosted, f"round {index + 1}: boosted {seen}, expected {boosted}"
 
 
-def test_orbit_is_in_every_round_from_29_on_at_an_equal_share():
-    """Every round from 29 to 96, not a sample of them, and no round favours one shape."""
+def _orbit_share(stage):
+    """`_pattern` rolls straight first, then draws uniformly from the pool, so repeating the
+    other patterns thins orbit without removing it."""
+    if "orbit" not in stage.patterns:
+        return 0.0
+    return (1 - stage.linear_probability) / len(stage.patterns)
+
+
+def test_orbit_is_present_from_round_29_on_and_ramps_rather_than_switching_on():
+    """Every round from 29 to 96 teaches it, and none of them is saturated with it.
+
+    Measured on the v16 champion, round 29 clears 0.542 at orbit's full share and 0.625 at
+    2%, which is what the round scores with no orbit at all -- while still putting 1.5
+    orbiting rocks per episode in front of the policy. Removing it outright would teach the
+    policy it never has to handle one, which is the mistake the co-op ladder already paid for.
+    """
     spec = _v3()
     assert "orbit" not in spec.stages[27].patterns          # round 28, the seam
-    assert abs(spec.stages[27].linear_probability - 1 / 12) < 1e-4
+    shares = []
     for index in range(28, 96):                             # rounds 29 through 96
         stage = spec.stages[index]
         assert "orbit" in stage.patterns, f"round {index + 1} is missing orbit"
-        assert len(stage.patterns) == len(set(stage.patterns)) == 12, f"round {index + 1}"
-        # `_pattern` draws uniformly from the pool, so equal membership is equal chance, and
-        # straight is one trajectory among equals at 1 / (patterns + 1).
-        assert abs(stage.linear_probability - 1 / 13) < 1e-4, f"round {index + 1}"
+        assert set(stage.patterns) >= {"sine", "orbit"}, f"round {index + 1}"
+        assert len(set(stage.patterns)) == 12, f"round {index + 1}"
+        shares.append(_orbit_share(stage))
+    # Never absent, never saturated at the start, and never decreasing.
+    assert all(share > 0.0 for share in shares)
+    assert shares[0] < 0.03, f"round 29 starts at {shares[0]:.1%}, too thick to be passable"
+    assert all(b >= a - 1e-9 for a, b in zip(shares, shares[1:])), "the ramp goes backwards"
+    assert abs(shares[-1] - 1 / 13) < 1e-3, "it never reaches full share"
 
 
 def test_v10_appends_a_turning_threat_block_and_moves_nothing():

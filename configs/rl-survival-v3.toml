@@ -67,43 +67,72 @@ no_hit_seconds_start = 0.0
 no_hit_seconds_step = 0.0
 promotion_accuracy = 0.05
 
-# `orbit` joins the pool at round 29, the first round after the seam: a true circle around a
-# centre that travels with the rock, where every other looping shape here is a bulge to one
-# side of the drift line. Straight stays one trajectory among equals, so `linear_probability`
-# moves from 1/12 to 1/13 wherever the pool grows to twelve.
+# `orbit` is ramped in rather than switched on. Measured on the v16 champion over 48 held-out
+# seeds, round 29 clears 0.542 with orbit at its full 8.3% share, 0.604 at 4.3%, and 0.625 at
+# 2.2% -- the same as with no orbit at all -- while still putting 1.5 orbiting rocks in front
+# of the policy every episode. Saturation is what makes the round unpassable, not exposure.
 #
-# `until` counts this file's own rounds, not the ladder's: round = 27 + until. So 1 is round
-# 28, 25 is round 52, 55 is round 82, 69 is round 96. The composition boundaries are v2's.
+# This is the rule the co-op work paid for: soften how much of a challenge there is, never
+# whether the skill is needed. Taking orbit out entirely would teach the policy it never has
+# to deal with one, and the next rung would have to unlearn that.
+#
+# The pool is drawn uniformly, so repeating the other eleven thins orbit without removing it,
+# exactly as repeating an entry in `asteroid_size` weights a rock size.
+#
+# `until` counts this file's own rounds, not the ladder's: round = 27 + until.
+
+# Round 28, the seam. Unchanged from the old ladder, no orbit yet.
 [[progression.phases]]
 until = 1
 patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
 linear_probability = 0.0833333
 asteroid_size = ["medium", "medium", "large", "large"]
+# orbit share: 0.0%
 
-# Rounds 29-30. Round 28 is half large rocks and round 29 was all of them at once, which is
-# the composition cliff the team ladder needed eight bridge rounds for. Measured on the v14
-# champion, that step alone cost 8 points of clear rate, and stacked with `orbit` arriving on
-# the same round the pair cost 24. Three quarters large first, then all of them at round 31.
+# Rounds 29-30. Orbit arrives at its thinnest, alongside the rock-mix bridge.
 [[progression.phases]]
 until = 3
-patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
 linear_probability = 0.0769231
 asteroid_size = ["medium", "large", "large", "large"]
+# orbit share: 2.1%
 
+# Rounds 31-39. All-large now; orbit still thin.
+[[progression.phases]]
+until = 12
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = "large"
+# orbit share: 2.1%
+
+# Rounds 40-48. Orbit doubles.
+[[progression.phases]]
+until = 21
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = "large"
+# orbit share: 4.0%
+
+# Rounds 49-52. Orbit at full share.
 [[progression.phases]]
 until = 25
 patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
 linear_probability = 0.0769231
 asteroid_size = "large"
+# orbit share: 7.7%
 
+# Rounds 53-82.
 [[progression.phases]]
 until = 55
 patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
 linear_probability = 0.0769231
 asteroid_size = ["large", "large", "large", "medium"]
+# orbit share: 7.7%
 
+# Rounds 83-96.
 [[progression.phases]]
 until = 69
 patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
 linear_probability = 0.0769231
 asteroid_size = "mixed"
+# orbit share: 7.7%
