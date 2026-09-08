@@ -1,0 +1,4 @@
+# Same tasks, rewards, orbit schedule and promotion rules; only add action warnings.
+[curriculum]
+extends = "rl-survival-v3.toml"
+observation_version = 11

@@ -32,6 +32,10 @@ COLLISION_THREAT_FEATURES = 10
 FIRE_CONSEQUENCE_FEATURES = 10
 DIFFICULTY_SCALE_FEATURES = 2
 TURNING_THREAT_FEATURES = 8
+# Stable order: FIRE, LEFT_FIRE, RIGHT_FIRE, FINE_LEFT_FIRE, FINE_RIGHT_FIRE,
+# THRUST_FIRE, LEFT_THRUST_FIRE, RIGHT_THRUST_FIRE.
+FIRING_ACTIONS = tuple(action for action in Action if action.fire)
+ACTION_FIRE_CONSEQUENCE_FEATURES = 4 * len(FIRING_ACTIONS)
 SHIP_FEATURES = 7
 MOBILE_SHIP_FEATURES = 11
 
@@ -45,7 +49,8 @@ def global_feature_count(observation_version: int) -> int:
             + (COLLISION_THREAT_FEATURES if observation_version >= 7 else 0)
             + (FIRE_CONSEQUENCE_FEATURES if observation_version >= 8 else 0)
             + (DIFFICULTY_SCALE_FEATURES if observation_version >= 9 else 0)
-            + (TURNING_THREAT_FEATURES if observation_version >= 10 else 0))
+            + (TURNING_THREAT_FEATURES if observation_version >= 10 else 0)
+            + (ACTION_FIRE_CONSEQUENCE_FEATURES if observation_version >= 11 else 0))
 
 
 def turn_rate(track, position: Vec2, width: float, height: float,
@@ -194,7 +199,8 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                        reveal_progress: bool = True, *, global_features: bool = False,
                        observation_version: int | None = None,
                        asteroid_context: dict[int, tuple[float, int]] | None = None,
-                       spawn_phase: float = 0.0, fire_consequence=None) -> np.ndarray:
+                       spawn_phase: float = 0.0, fire_consequence=None,
+                       action_fire_consequences=None) -> np.ndarray:
     version = (5 if global_features else 4) if observation_version is None else int(
         observation_version)
     slots = history_offsets(history_frames) if offsets is None else offsets
@@ -506,6 +512,25 @@ def encode_observation(state: WorldSnapshot, agent_id: str, config: GameConfig,
                 # large for one circling, so this is also "how much to distrust the v7 block".
                 max(-1.0, min(1.0, (straight - clearance) / 150.0)),
             ))
+    if version >= 11:
+        # Append, never reinterpret the v8 warning or move the v10 inputs. Each block
+        # answers the action the policy can actually take, including turn/thrust
+        # while waiting for the weapon. Coasting after the shot remains an assumption.
+        consequences = action_fire_consequences
+        if consequences is None:
+            consequences = (None,) * len(FIRING_ACTIONS)
+        if len(consequences) != len(FIRING_ACTIONS):
+            raise ValueError("one fire consequence is required for each firing action")
+        lifetime = max(config.projectile.lifetime, 1e-6)
+        for consequence in consequences:
+            if consequence is None:
+                values.extend((0.0, 0.0, 1.0, 1.0))
+            else:
+                values.extend((
+                    1.0, float(consequence.splits),
+                    max(-1.0, min(1.0, consequence.worst_clearance / 150.0)),
+                    min(1.0, consequence.worst_at / (lifetime + 1.0)),
+                ))
     return np.asarray(values, dtype=np.float32)
 
 
@@ -1117,7 +1142,13 @@ class AsteroidsRLEnv:
             observation_version=self.observation_version,
             asteroid_context=self._asteroid_context,
             spawn_phase=self.simulation.spawn_phase,
-            fire_consequence=consequence)
+            fire_consequence=consequence,
+            action_fire_consequences=(
+                tuple(self.simulation.fire_consequence(
+                    ship_id, within_frames=self.frame_skip, turn=action.turn,
+                    thrust=action.thrust, corrected=True)
+                      for action in FIRING_ACTIONS)
+                if self.observation_version >= 11 else None))
 
     def _companion_actions(self) -> dict[str, Action]:
         """One action per companion, held for the whole frame-skip like the learner's."""

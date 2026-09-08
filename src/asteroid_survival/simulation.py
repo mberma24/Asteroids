@@ -207,7 +207,7 @@ class Simulation:
 
     def fire_consequence(self, ship_id: str, *, horizon: float = 1.0,
                          turn: float = 0.0, thrust: bool = False,
-                         within_frames: int = 1) -> "FireConsequence | None":
+                         within_frames: int = 1, corrected: bool = False) -> "FireConsequence | None":
         """If this ship took a firing action now, what would the shot hit and the pieces do?
 
         The policy's dominant cause of death is a fragment of a rock it has just shot: 18 of
@@ -230,6 +230,12 @@ class Simulation:
         and ``thrust`` to the frame the shot actually leaves on. Returns ``None`` when the
         weapon will not come free inside that window, when the ship is dead, or when nothing
         is struck within the projectile's lifetime.
+
+        corrected=True also coasts the ship during projectile flight, applies drag
+        before movement, and counts the slot freed by the destroyed parent. The default
+        preserves v8-v10 observations for existing checkpoints. Both modes approximate
+        target motion linearly and assume coasting after firing: neither is an oracle
+        for later thrust, other projectiles, random fragments, or future spawns.
         """
         ship = next((s for s in self._ships if s.id == ship_id), None)
         if ship is None or not ship.alive:
@@ -293,7 +299,11 @@ class Simulation:
         hit_pos = wrap(hit_pos, w, h)
         # A split that would exceed the active cap is suppressed by the simulator, so a full
         # field makes shooting paradoxically safe.
-        splits = best.size > 1 and len(self._asteroids) < self._difficulty().active_cap
+        # Removing the parent frees a slot even when the field is at its cap.
+        # Keep legacy observations unchanged; corrected warnings are explicitly opt-in.
+        child_count = min(2, max(0, self._difficulty().active_cap - len(self._asteroids) + 1))
+        splits = best.size > 1 and (child_count > 0 if corrected else
+                                    len(self._asteroids) < self._difficulty().active_cap)
 
         worst_clearance, worst_at, worst_closing = math.inf, horizon, 0.0
         if splits:
@@ -304,7 +314,7 @@ class Simulation:
             base_angle = math.atan2(hit_vel.y, hit_vel.x)
             steps = max(1, int(round(horizon * self.config.arena.fps / 4)))
             decay = max(0.0, 1.0 - c.drag * self.dt)
-            for sign in (-1, 1):
+            for sign in ((-1, 1)[:child_count] if corrected else (-1, 1)):
                 forward = from_angle(base_angle + sign * 0.45)
                 for index in range(steps + 1):
                     tau = index * (horizon / steps)
@@ -312,10 +322,14 @@ class Simulation:
                         hit_pos, forward, child_speed, best.pattern, tau,
                         best.amplitude, best.frequency, best.phase)
                     # The ship coasts: what happens if it does nothing about the piece.
-                    frames = tau * self.config.arena.fps
+                    elapsed = best_time + tau if corrected else tau
+                    frames = elapsed * self.config.arena.fps
                     scale = decay ** frames
-                    drift = (velocity * ((1.0 - scale) / (1.0 - decay) * self.dt)
-                             if c.mobile and decay < 1.0 else velocity * tau)
+                    drift = (velocity * ((1.0 - scale) / (1.0 - decay) * self.dt
+                                         * (decay if corrected else 1.0))
+                             if c.mobile and decay < 1.0 else velocity * elapsed)
+                    if corrected and not c.mobile:
+                        drift = Vec2(0.0, 0.0)
                     gap = wrapped_delta(wrap(position + drift, w, h),
                                         wrap(child_pos, w, h), w, h)
                     distance = max(gap.length(), 1e-9)
@@ -325,7 +339,7 @@ class Simulation:
                         worst_closing = -(
                             (child_vel.x - velocity.x * scale) * gap.x / distance
                             + (child_vel.y - velocity.y * scale) * gap.y / distance)
-        if worst_clearance is math.inf:
+        if math.isinf(worst_clearance):
             worst_clearance = math.hypot(w / 2, h / 2)
         offset = wrapped_delta(position, hit_pos, w, h)
         return FireConsequence(
