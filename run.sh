@@ -746,10 +746,12 @@ cmd_status() {        # how is training going
   echo "== $dir =="
   if [ $# -eq 0 ]; then
     local others
-    others="$(ls -dt models/*/ 2>/dev/null | sed 's:/$::' | grep -v "^${dir}$" | head -3 | tr '\n' ' ')"
-    # An `x && echo` here would be the last command in the block, so under `set -e` an empty
-    # list exits the script -- which made `status` print its header and nothing else on any
-    # checkout holding a single run.
+    # `|| true` is load-bearing under `set -euo pipefail`: with only one run present, the
+    # `grep -v` filters every line away and exits 1, `pipefail` promotes that to the whole
+    # pipeline, and the assignment then kills the script. `status` printed its header and
+    # nothing else on any checkout holding a single run, which reads as a dead trainer rather
+    # than as a bug in the reporting.
+    others="$(ls -dt models/*/ 2>/dev/null | sed 's:/$::' | grep -v "^${dir}$" | head -3 | tr '\n' ' ' || true)"
     if [ -n "$others" ]; then
       echo "other runs: $others(pass one to ./run.sh status)"
     fi
