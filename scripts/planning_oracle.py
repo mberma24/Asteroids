@@ -109,8 +109,21 @@ class PlanningOracle:
                                                 self.width, self.height))
 
     def act(self) -> int:
+        return self.decide()[0]
+
+    def decide(self) -> tuple[int, int]:
+        """The chosen action, and a bitmask of every first action that survived the horizon.
+
+        The argmax is one of up to sixteen near-equivalent plans, so as a label it carries
+        noise: two plans that both survive differ mostly in which random perturbation was
+        drawn. The mask records every first action the search found survivable, which a
+        cloner can score as a set instead of guessing which of them the oracle happened to
+        pick. It is only as complete as the sample -- an action no candidate started with is
+        absent, not unsafe.
+        """
         base = self._pilot_index(self.env.state)
         best_score, best_action = -math.inf, base
+        safe = 0
         for candidate in range(self.candidates):
             if candidate == 0:
                 plan = [None] * self.horizon          # the unperturbed pilot
@@ -123,50 +136,77 @@ class PlanningOracle:
             if self.blind:
                 fork._rng = random.Random(self.rng.getrandbits(64))
             score = self._rollout(fork, plan)
+            if score >= SURVIVED_BONUS:
+                safe |= 1 << first
             if score > best_score:
                 best_score, best_action = score, first
-        return best_action
+        return best_action, safe
 
 
-def _write_trace(path: str, chunks_obs: list, chunks_act: list) -> None:
+def _write_trace(path: str, chunks: dict[str, list]) -> None:
     """Write the dataset so far. Called periodically so a long run is crash-tolerant."""
-    if not chunks_act:
+    if not chunks["actions"]:
         return
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(".partial.npz")
-    np.savez_compressed(temporary,
-                        observations=np.concatenate(chunks_obs),
-                        actions=np.concatenate(chunks_act))
+    np.savez_compressed(temporary, **{k: np.concatenate(v) for k, v in chunks.items()})
     temporary.replace(destination)
 
 
+def layout_from(checkpoint: str | None) -> dict:
+    """The observation layout a recording must use to be fed back into `checkpoint`."""
+    if not checkpoint:
+        return LAYOUT
+    metadata = json.loads((Path(checkpoint) / "metadata.json").read_text(encoding="utf-8"))
+    layout = dict(metadata["observation_layout"])
+    for key, default in LAYOUT.items():
+        layout.setdefault(key, default)
+    return layout
+
+
 def run_seed(args) -> dict:
-    stage_index, seed, candidates, horizon, epsilon, curriculum, record, blind = args
+    (stage_index, seed, candidates, horizon, epsilon, curriculum, record, blind,
+     layout, driver) = args
     spec = load_curriculum(curriculum)
-    env = _stage_env(spec, stage_index, LAYOUT)
+    env = _stage_env(spec, stage_index, layout)
     observation, _ = env.reset(seed)
     oracle = PlanningOracle(env, candidates=candidates, horizon=horizon,
                             epsilon=epsilon, seed=seed, blind=blind)
+    policy = None
+    if driver:
+        # DAgger: the policy under training steers, so the states visited are the ones it
+        # actually reaches, and the oracle only supplies the label for each of them.
+        import torch
+        from asteroid_survival.rl.ppo import PPOController
+        torch.set_num_threads(1)          # one worker per core; torch must not fan out
+        policy = PPOController(driver, device="cpu")
+        policy.reset()
     done = False
     info: dict = {}
     trace = []
     while not done:
-        action = oracle.act()
+        action, safe = oracle.decide()
         if record:
             # The pair a behavioural-cloning run needs: what the policy sees, and what a
             # searcher with two seconds of verified lookahead does about it.
-            trace.append((observation.astype(np.float32), int(action)))
+            trace.append((observation.astype(np.float32), int(action), int(safe)))
+        if policy is not None:
+            action = policy(observation)
         observation, _, terminated, truncated, info = env.step(action)
         done = terminated or truncated
     metrics = info["episode_metrics"]
     limit = spec.stages[stage_index].max_seconds
     # Pack before returning. A list of 1265 Python floats per state costs ~32 bytes each;
     # as float32 it is 4, which is the difference between ~9 GB in the parent and ~0.5 GB.
-    packed = ((np.stack([o for o, _ in trace]),
-               np.asarray([a for _, a in trace], dtype=np.int64))
-              if trace else (np.zeros((0, 0), np.float32), np.zeros((0,), np.int64)))
-    return {"seed": seed, "trace_obs": packed[0], "trace_act": packed[1],
+    if trace:
+        packed = {"observations": np.stack([o for o, _, _ in trace]),
+                  "actions": np.asarray([a for _, a, _ in trace], dtype=np.int64),
+                  "safe": np.asarray([s for _, _, s in trace], dtype=np.uint16)}
+    else:
+        packed = {"observations": np.zeros((0, 0), np.float32),
+                  "actions": np.zeros((0,), np.int64), "safe": np.zeros((0,), np.uint16)}
+    return {"seed": seed, "trace": packed,
             "cleared": bool(metrics.get("completed_stage")),
             "survival_time": float(metrics["survival_time"]),
             "completion": min(1.0, float(metrics["survival_time"]) / limit),
@@ -190,30 +230,40 @@ def main() -> None:
     parser.add_argument("--record", metavar="PATH",
                         help="also write (observation, oracle action) pairs here as npz, "
                              "for behavioural cloning or agreement analysis")
+    parser.add_argument("--layout-from", metavar="CHECKPOINT",
+                        help="record observations in this checkpoint's layout, so the "
+                             "pairs can be fed back into it (default: the v7 layout)")
+    parser.add_argument("--driver", metavar="CHECKPOINT",
+                        help="let this PPO checkpoint steer while the oracle only labels "
+                             "(DAgger); the oracle's clear rate is then the driver's")
     args = parser.parse_args()
 
+    layout = layout_from(args.layout_from)
     report = {"candidates": args.candidates, "horizon": args.horizon,
               "epsilon": args.epsilon, "seeds": args.seeds, "blind": bool(args.blind),
-              "stages": {}}
+              "layout": layout, "driver": args.driver, "stages": {}}
     for stage_index in [int(x) for x in args.stages.split(",")]:
         jobs = [(stage_index, s, args.candidates, args.horizon, args.epsilon,
-                 args.curriculum, bool(args.record), bool(args.blind))
+                 args.curriculum, bool(args.record), bool(args.blind), layout, args.driver)
                 for s in range(args.seed_start, args.seed_start + args.seeds)]
         results = []
-        chunks_obs, chunks_act = [], []
+        chunks: dict[str, list] = {"observations": [], "actions": [], "safe": [],
+                                   "episodes": []}
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
             for done, result in enumerate(pool.map(run_seed, jobs), start=1):
+                trace = result.pop("trace")
                 if args.record:
-                    chunks_obs.append(result.pop("trace_obs"))
-                    chunks_act.append(result.pop("trace_act"))
-                else:
-                    result.pop("trace_obs", None)
-                    result.pop("trace_act", None)
+                    for key, value in trace.items():
+                        chunks[key].append(value)
+                    # Episode index per pair, so a cloner can hold out whole episodes:
+                    # neighbouring frames are near-duplicates and a random split leaks.
+                    chunks["episodes"].append(
+                        np.full(len(trace["actions"]), done - 1, dtype=np.int32))
                 results.append(result)
                 if args.record and done % 20 == 0:
-                    _write_trace(args.record, chunks_obs, chunks_act)
+                    _write_trace(args.record, chunks)
                     print(f"  {done}/{len(jobs)} episodes, "
-                          f"{sum(len(c) for c in chunks_act):,} pairs checkpointed",
+                          f"{sum(len(c) for c in chunks['actions']):,} pairs checkpointed",
                           flush=True)
                 elif done % 20 == 0:
                     print(f"  {done}/{len(jobs)} episodes", flush=True)
@@ -221,8 +271,8 @@ def main() -> None:
         completion = statistics.fmean(r["completion"] for r in results)
         name = load_curriculum(args.curriculum).stages[stage_index].name
         if args.record:
-            _write_trace(args.record, chunks_obs, chunks_act)
-            print(f"  recorded {sum(len(c) for c in chunks_act):,} "
+            _write_trace(args.record, chunks)
+            print(f"  recorded {sum(len(c) for c in chunks['actions']):,} "
                   f"(observation, action) pairs -> {args.record}", flush=True)
         report["stages"][str(stage_index)] = {
             "name": name, "clear_rate": clear, "completion": completion,

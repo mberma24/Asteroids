@@ -1,0 +1,14 @@
+# Install as /etc/systemd/system/asteroids-holiday-watchdog.service, with the .timer.
+# Starts asteroids.service if neither it nor the holiday pipeline is alive, so a pipeline
+# crash the fallback code could not catch (OOM kill, reboot mid-step) leaves the box training
+# rather than idle. Remove both units when the pipeline is retired.
+[Unit]
+Description=Start Asteroids training if the holiday pipeline died
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Asteroids
+ExecStart=/home/ubuntu/Asteroids/.venv/bin/python scripts/holiday_pipeline.py watchdog
+StandardOutput=append:/home/ubuntu/Asteroids/experiments/holiday-2026-09-11/watchdog.log
+StandardError=append:/home/ubuntu/Asteroids/experiments/holiday-2026-09-11/watchdog.log

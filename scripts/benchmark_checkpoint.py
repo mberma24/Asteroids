@@ -27,12 +27,12 @@ SNAPSHOTS = Path("/home/ubuntu/Asteroids/experiments/v18/snapshots")
 _WORKER: dict = {}
 
 
-def _init(checkpoint: str) -> None:
+def _init(checkpoint: str, snapshots: str) -> None:
     import torch
     torch.set_num_threads(1)
     controller = PPOController(checkpoint, device="cpu")
     _WORKER.update(controller=controller, layout=controller.metadata["observation_layout"],
-                   specs={name: load_curriculum(SNAPSHOTS / name / "rl-survival-v3.toml")
+                   specs={name: load_curriculum(Path(snapshots) / name / "rl-survival-v3.toml")
                           for name in ("current", "full")})
 
 
@@ -71,6 +71,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1_000_000_832)
     parser.add_argument("--count", type=int, default=256)
     parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--snapshots", default=str(SNAPSHOTS),
+                        help="directory holding current/ and full/ config snapshots")
     args = parser.parse_args()
 
     started = time.time()
@@ -79,7 +81,7 @@ def main() -> None:
             for seed in range(args.seed, args.seed + args.count)]
     results: dict[str, list] = {name: [] for name in names}
     with ProcessPoolExecutor(max_workers=args.workers, initializer=_init,
-                             initargs=(args.checkpoint,)) as pool:
+                             initargs=(args.checkpoint, args.snapshots)) as pool:
         for done, (job, row) in enumerate(zip(jobs, pool.map(_episode, jobs)), start=1):
             results[job[0]].append(row)
             if done % 64 == 0:

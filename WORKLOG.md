@@ -8,6 +8,55 @@ Last updated: 2026-09-11.
 
 ---
 
+## 2026-09-11 (later): the holiday run -- clone the blind oracle, DAgger it, then PPO
+
+The VM is unattended for 2-3 days. v21 is a measured null (entry below), so it has been
+stopped and the box given to the one lever with a mechanism behind it: put the oracle's
+behaviour into the policy network directly. `docs/holiday-2026-09-11.md` is the runbook.
+
+**The prior that shapes the design.** The 2026-08-26 clone of the planning oracle scored
+**0.078** on round 26, worse than greedy (`cloud/asteroids-v11-baseline.conf`), after 19%
+validation agreement against an 18% majority baseline on 10k pairs. Two confounds were named
+at the time and both are gone: the labels were *clairvoyant* (the oracle peeked at the
+fragment RNG draw, which `fragment_motion = "inherit"` has since removed from every v3
+round), and each label was the argmax of sixteen random plans, so two plans that both survive
+differ only in which perturbation was drawn. 0.078 is also below what a policy that merely
+ignored its inputs would score, which is the signature of compounding error off the expert's
+state distribution rather than of an unlearnable target. Three mitigations, one per cause:
+
+1. **Blind oracle** (`--blind`): lookahead over the field, no clairvoyance. It clears round 29
+   as shipped at 0.922 (64 seeds), so its decisions are a function of what is on the field.
+2. **Safe-set labels**: `planning_oracle.py` now records, per decision, the bitmask of first
+   actions whose plan survived the horizon, next to the argmax. The cloner scores
+   `-log sum_{a in safe} pi(a)` at half weight beside the argmax cross-entropy.
+3. **DAgger**: `--driver CHECKPOINT` lets the clone steer while the oracle labels the states
+   it actually reaches. Two rounds (r1 on c0, r2 on c1), each clone retrained on everything.
+
+**Pre-registered decision rule.** Each clone is scored on the same 256 held-out round-29 seeds
+as the v21 baseline (source 0.672). The best launches ordinary PPO (v21's settings, primed as
+its own champion at its measured score) if it clears **>= 0.40**; otherwise v21 resumes. Any
+crash resumes v21; an hourly watchdog restarts training if nothing is alive. The threshold is
+deliberately below the source's 0.672: a clone that plays differently and clears 0.5 is a
+better basin to fine-tune from than a policy that has been flat for 260,000 episodes.
+
+**What each outcome means.** Validation agreement at the majority baseline: the oracle's
+choice is not a function of the observation, and the next move is search at inference, not
+training. Good agreement, poor clear, repaired by r1/r2: distribution shift, as suspected.
+Good clear: judge the fine-tune on 20,000-episode buckets, and on
+`scripts/benchmark_checkpoint.py` against `source/`, never on a single pooled reading.
+
+**Budgets.** r0 10h, r1 5h, r2 5h of recording on 4 workers; ~1h per clone+benchmark; then
+1.5-2 days of PPO. Today's oracle did 64 episodes in 2h50m on 2 contended workers, so r0
+should land 1,000-1,800 episodes (0.5-0.8M pairs); the old clone had 10k. Budgets are
+wall-clock, and the recorder checkpoints its npz every 20 episodes, so nothing overruns.
+
+**Tooling.** `scripts/clone_oracle.py` (trains the SB3 policy in place; writes an
+`INITIALIZE_FROM`-ready checkpoint), `scripts/holiday_pipeline.py` (resumable steps,
+`--smoke`, `--local`, `--fail-at`), `cloud/asteroids-holiday.sh` and the watchdog units.
+Smoke-tested end to end on the Mac and the VM, including the injected-failure fallback.
+
+---
+
 ## 2026-09-11: v21 learned nothing in 259,000 episodes, and round 29 has 17 points of headroom
 
 v21 (observation v11, action-conditioned fragment warnings) looked close to promoting --
