@@ -1,5 +1,23 @@
 # Training somewhere else
 
+## VM directory convention (2026-09-08)
+
+Keep all VM work under `/home/ubuntu/Asteroids`; do not create sibling Asteroids
+directories. Active code, `cloud-train.log`, and `models/` live there, with diagnostic
+results in `experiments/` and preserved inactive checkouts in `archives/`.
+
+The v21 service now runs from this main directory and resumed its existing run at
+checkpoint 13,500 after consolidation. Its PPO settings were unchanged. Inspect it with:
+
+```bash
+ssh oracle
+cd ~/Asteroids
+./run.sh status models/oracle-survival-v3-v21-action-fire
+tail -f cloud-train.log
+```
+
+The older setup notes below describe earlier runs and infrastructure choices.
+
 The solo PPO workload is **Python physics plus a small network**, so it is bound by CPU
 cores, not by matrix throughput. This is measured, not assumed: the same run does 799
 decisions/s on CPU and 294 on Apple MPS, and stable-baselines3 prints a warning saying so.

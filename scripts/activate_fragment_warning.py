@@ -7,8 +7,8 @@ import sys
 import torch
 from stable_baselines3 import PPO
 
-ROOT = Path("/home/ubuntu/asteroids-experiments/fragment-warning-v21")
-REPO = Path("/home/ubuntu/Asteroids-v21")
+ROOT = Path("/home/ubuntu/Asteroids/experiments/fragment-warning-v21")
+REPO = Path("/home/ubuntu/Asteroids")
 DROPIN = Path("/etc/systemd/system/asteroids.service.d/bridge.conf")
 
 

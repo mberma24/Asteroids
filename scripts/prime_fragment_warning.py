@@ -8,10 +8,10 @@ sys.path.insert(0, "src")
 from asteroid_survival.rl.curriculum import load_curriculum
 from asteroid_survival.rl.ppo_support import PPOChampionTracker
 
-ROOT = Path("/home/ubuntu/asteroids-experiments/fragment-warning-v21")
+ROOT = Path("/home/ubuntu/Asteroids/experiments/fragment-warning-v21")
 OLD = Path("/home/ubuntu/Asteroids/models/oracle-survival-v3-v20-conservative")
-NIGHT = Path("/home/ubuntu/asteroids-experiments/night-2026-09-08")
-RUN = Path("/home/ubuntu/Asteroids-v21/models/oracle-survival-v3-v21-action-fire")
+NIGHT = Path("/home/ubuntu/Asteroids/experiments/night-2026-09-08")
+RUN = Path("/home/ubuntu/Asteroids/models/oracle-survival-v3-v21-action-fire")
 
 
 def main():

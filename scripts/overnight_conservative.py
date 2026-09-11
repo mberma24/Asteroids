@@ -14,12 +14,12 @@ from asteroid_survival.rl.orbit_experiment import atomic_json, paired_difference
 from asteroid_survival.rl.ppo_support import PPOChampionTracker
 
 REPO = Path("/home/ubuntu/Asteroids")
-TOOLS = Path("/home/ubuntu/Asteroids-v18")
-ROOT = Path("/home/ubuntu/asteroids-experiments/night-2026-09-08")
+TOOLS = Path("/home/ubuntu/Asteroids/archives/orbit-practice-v18")
+ROOT = Path("/home/ubuntu/Asteroids/experiments/night-2026-09-08")
 RUN = REPO / "models/oracle-survival-v3-v20-conservative"
 LR = 5e-5 / 3
 EVALUATOR = [str(REPO / ".venv/bin/python"), str(TOOLS / "scripts/orbit_experiment.py"),
-             "evaluate", "--root", "/home/ubuntu/asteroids-experiments/v18"]
+             "evaluate", "--root", "/home/ubuntu/Asteroids/experiments/v18"]
 
 
 def evaluate(checkpoint, name, *, seed=1_000_000_832, count=256, names="current,full"):
@@ -44,7 +44,7 @@ def choose():
                                            reference["benchmarks"][name]["episodes"])
                    for name in ("current", "full")}
     selected, baseline = "control-reference", reference
-    final = read_json(Path("/home/ubuntu/asteroids-experiments/v18/report.json"))
+    final = read_json(Path("/home/ubuntu/Asteroids/experiments/v18/report.json"))
     previous = Path(final["state"]["candidates"]["control"])
     if sha(ROOT / "control-reference/model.zip") != sha(previous / "model.zip"):
         raise RuntimeError("reference differs from the independently tested control candidate")
@@ -104,12 +104,12 @@ def launch():
     (ROOT / "review.service").write_text(
         "[Unit]\nDescription=Review ordinary Asteroids training after eight hours\n"
         "[Service]\nType=oneshot\nUser=ubuntu\nWorkingDirectory=/home/ubuntu/Asteroids\n"
-        "Environment=PYTHONPATH=/home/ubuntu/Asteroids-v18/src\n"
+        "Environment=PYTHONPATH=/home/ubuntu/Asteroids/archives/orbit-practice-v18/src\n"
         "Environment=OMP_NUM_THREADS=1\nEnvironment=MKL_NUM_THREADS=1\nNice=10\n"
         "TimeoutStartSec=3600\n"
         "ExecStart=/home/ubuntu/Asteroids/.venv/bin/python scripts/overnight_conservative.py review\n"
-        "StandardOutput=append:/home/ubuntu/asteroids-experiments/night-2026-09-08/review.log\n"
-        "StandardError=append:/home/ubuntu/asteroids-experiments/night-2026-09-08/review.log\n")
+        "StandardOutput=append:/home/ubuntu/Asteroids/experiments/night-2026-09-08/review.log\n"
+        "StandardError=append:/home/ubuntu/Asteroids/experiments/night-2026-09-08/review.log\n")
     (ROOT / "review.timer").write_text(
         "[Unit]\nDescription=Asteroids morning review\n[Timer]\n"
         f"OnCalendar={review_at.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"

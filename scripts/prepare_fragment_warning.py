@@ -13,7 +13,7 @@ from asteroid_survival.rl.curriculum import load_curriculum, task_hash
 from asteroid_survival.rl.gym_env import GymAsteroidsEnv
 from asteroid_survival.rl.ppo import _stage_env, _task_layout, widen_policy
 
-ROOT = Path("/home/ubuntu/asteroids-experiments/fragment-warning-v21")
+ROOT = Path("/home/ubuntu/Asteroids/experiments/fragment-warning-v21")
 CONFIG = "configs/rl-survival-v3-action-fire.toml"
 
 

@@ -49,11 +49,11 @@ PPO settings are explicitly preserved (including n_steps=256 and gamma=.997).
 
 ## Operations and rollback
 
-VM worktree: /home/ubuntu/Asteroids-v21
+VM worktree: /home/ubuntu/Asteroids
 Ordinary run: models/oracle-survival-v3-v21-action-fire
 Service: asteroids.service (normal restart/reboot behavior, no experiment auto-pause)
-Log: /home/ubuntu/Asteroids-v21/cloud-train.log
-Evidence and preserved checkpoints: /home/ubuntu/asteroids-experiments/fragment-warning-v21
+Log: /home/ubuntu/Asteroids/cloud-train.log
+Evidence and preserved checkpoints: /home/ubuntu/Asteroids/experiments/fragment-warning-v21
 
 The new run starts from the behavior-preserving widened champion, not the smoke learner.
 Its protected incumbent is primed with the prior independent 256-seed current-round
@@ -62,7 +62,7 @@ The entire v20 run remains intact and an extra latest-complete-learner backup is
 
 Explicit rollback, if needed:
 sudo systemctl stop asteroids.service
-sudo install -m 644 /home/ubuntu/asteroids-experiments/fragment-warning-v21/v20-bridge.conf /etc/systemd/system/asteroids.service.d/bridge.conf
+sudo install -m 644 /home/ubuntu/Asteroids/experiments/fragment-warning-v21/v20-bridge.conf /etc/systemd/system/asteroids.service.d/bridge.conf
 sudo systemctl daemon-reload
 sudo systemctl start asteroids.service
 
