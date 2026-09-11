@@ -4,7 +4,61 @@ Running record of what has been changed and what was learned, so work can resume
 sessions without re-deriving it. Newest context at the top; the detail is chronological
 below.
 
-Last updated: 2026-09-03.
+Last updated: 2026-09-11.
+
+---
+
+## 2026-09-11: v21 learned nothing in 259,000 episodes, and round 29 has 17 points of headroom
+
+v21 (observation v11, action-conditioned fragment warnings) looked close to promoting --
+pooled clear bouncing 60-70% against a 75% gate. It is not close. Two measurements, both
+under `~/Asteroids/experiments/assessment-2026-09-11/` on the VM.
+
+**The run is flat from its first evaluation.** Round-29 clear in 20,000-episode buckets, 40
+evaluations each: 0.636, 0.670, 0.652, 0.664, 0.658, 0.689, 0.676, 0.672, 0.663, 0.676,
+0.685, 0.654, 0.664. Its source cleared 0.672 on 256 seeds before training. At p = 0.665
+one 256-episode pooled reading has sigma ~0.03, so the 60-70% bounce is noise and the gate is
+~3 sigma above the policy's level. The protected champion (episode 134,500, "75% clear") was
+installed on 64-episode panels of the same kind.
+
+**Matched held-out comparison, 256 seeds from 1,000,000,832** -- the seeds and benchmarks of
+the recorded v21 starting baseline:
+
+| checkpoint | `current` round 29 (orbit 2%) | `full` round 29 (orbit full share) |
+|---|---:|---:|
+| source (v20 morning champion, widened) | 0.672 | 0.504 |
+| v21 champion, ep 134,500 | 0.652 | 0.562 |
+| v21 latest, ep 259,500 | 0.641 | 0.504 |
+
+Paired against the source on the same seeds, bootstrap 95% intervals: `current` champion
+-0.020 [-0.094, +0.059], latest -0.031 [-0.105, +0.047]; `full` champion +0.059
+[-0.020, +0.137], latest +0.000 [-0.074, +0.074]. Every interval spans zero. Nothing
+v21 produced is distinguishable from where it started, and the latest checkpoint is, if
+anything, slightly behind its own champion.
+
+Retention, rounds 23-28, 64 seeds each (completion; rule min >= 0.50, mean >= 0.75): champion
+0.98 0.97 0.97 0.94 0.95 0.93, latest 0.96 0.98 0.95 0.90 0.87 0.83. Both pass, but the
+latest has slid on 26-28 (clear 0.80 / 0.75 / 0.69 against the champion's 0.84 / 0.86 / 0.83).
+
+**The rung is well inside the feasible region.** The blind planning oracle -- lookahead over
+the field, no clairvoyance about spawns or fragments -- clears round 29 as currently shipped
+at **0.922** (64 seeds from 1,000,003,000, +-0.07 at 95%; completion 0.950). The old 0.812
+was 16 seeds on the pre-ramp round. So 0.75 is 81% of the reactive ceiling, not 94%, and the
+gate is fair. The policy is 27 points under the ceiling and 10 under the gate.
+
+**Verdict.** The action-conditioned warnings did not move round 29, and more ordinary PPO
+at LR 1.7e-5 does not either -- v16 spent 203,500 episodes here, v21 259,000. The ladder is
+not the problem this time; the learner is. Not done yet, and the next thing to try: the
+policy's round-29 deaths are 22/23 self-inflicted fragments (`docs/fragment-warning-v21.md`)
+and the oracle, which avoids them by lookahead, clears 0.92 -- which makes imitation of the
+blind oracle (`planning_oracle.py --record` already writes the pairs) the most direct lever
+measured so far.
+
+**Tooling.** `scripts/benchmark_checkpoint.py` scores any observation version on the v18
+benchmarks from the live `src` (the archived evaluator cannot load v11). Calibrated: the v21
+source replays the first 64 baseline seeds with identical clear, survival and kills. Also
+fixed `run.sh status`/`follow` dying silently whenever any `planning_oracle.py` process
+existed, which is why two reporting tests failed on the Mac and passed on the VM.
 
 ---
 
