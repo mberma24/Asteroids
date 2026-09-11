@@ -60,6 +60,23 @@ def test_status_reports_the_clear_rate(tmp_path):
     assert "clear  81.2%" in output
 
 
+def test_status_survives_an_oracle_with_no_log_here(tmp_path):
+    # Any process matching `planning_oracle.py` -- including an ssh command that launches one
+    # on the VM -- used to make `status` print its RUNNING line and exit 1 silently, because
+    # no `oracle-*.log` existed in this directory. The two tests above failed whenever one was
+    # running, and passed otherwise.
+    run, _ = _make_run(tmp_path)
+    env = _environment(tmp_path, run)
+    pgrep = tmp_path / "bin" / "pgrep"
+    pgrep.write_text("#!/bin/sh\necho 777\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+    result = subprocess.run(
+        [str(ROOT / "run.sh"), "status", str(run)], cwd=ROOT, env=env,
+        text=True, capture_output=True, timeout=5, check=True)
+    assert "planning oracle: RUNNING (pid 777)" in result.stdout
+    assert "clear  81.2%" in result.stdout
+
+
 def test_follow_reports_clear_rate_and_target_for_new_records(tmp_path):
     # The initial status block and the streaming formatter deliberately use different
     # layouts; pin both so a future display edit cannot hide a promotion gate again.

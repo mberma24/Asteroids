@@ -795,9 +795,14 @@ PYEOF
   if [ -n "$oracle_pid" ]; then
     # Newest log wins: several of these accumulate and a finished run's last line would
     # otherwise be reported as the live job's progress.
+    # Both need `|| true` for the same reason as pgrep: an oracle launched from another
+    # directory leaves no `oracle-*.log` here, and a fresh one has not printed progress yet.
+    # Either failure killed `status` right after its RUNNING line, and `follow` with it.
     local oracle_log oracle_progress=""
-    oracle_log="$(ls -t oracle-*.log 2>/dev/null | head -1)"
-    [ -n "$oracle_log" ] && oracle_progress="$(grep -E "episodes|clear" "$oracle_log" | tail -1)"
+    oracle_log="$(ls -t oracle-*.log 2>/dev/null | head -1 || true)"
+    if [ -n "$oracle_log" ]; then
+      oracle_progress="$(grep -E "episodes|clear" "$oracle_log" | tail -1 || true)"
+    fi
     echo "planning oracle: RUNNING (pid $oracle_pid)${oracle_progress:+ | ${oracle_progress# }}"
   fi
   if [ -f "$dir/training.jsonl" ]; then
