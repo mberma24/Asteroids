@@ -4,7 +4,115 @@ Running record of what has been changed and what was learned, so work can resume
 sessions without re-deriving it. Newest context at the top; the detail is chronological
 below.
 
-Last updated: 2026-09-11.
+Last updated: 2026-09-13.
+
+---
+
+## 2026-09-13: the holiday run finished -- cloning works, and it is only halfway to the label
+
+The pipeline ran all six steps without an error and took its own decision: **no clone reached
+the 0.40 bar, so v21 resumed** at 14:04 UTC on 12 Sep and has been training since. The
+fallback worked exactly as designed and nothing was left idle.
+
+**The three clones, on the same 256 held-out round-29 seeds as everything else** (v21's source
+scores 0.672 there; the blind oracle 0.922 on its own seeds):
+
+| clone | trained on | round-29 clear | val top-1 | majority | in safe set | train top-1 |
+|---|---|---:|---:|---:|---:|---:|
+| c0 | r0, oracle drives, 210k pairs | 0.246 | 0.249 | 0.172 | 0.50 | 0.277 |
+| c1 | + r1, c0 drives, 321k | 0.191 | 0.296 | 0.214 | 0.52 | 0.309 |
+| c2 | + r2, c1 drives, 436k | **0.352** | 0.315 | 0.205 | 0.55 | 0.348 |
+
+Retention (rounds 23-28 completion): c2 0.92 0.89 0.88 0.78 0.76 0.74, which passes the
+retention rule; c0 and c1 do not.
+
+**This is not the 2026-08-26 failure repeating.** That clone memorised its 10k pairs (train
+99.2%, val 19.1% against a 17.9% majority) and scored 0.078. These clones do the opposite:
+train barely exceeds validation, so they *underfit*, and validation sits 8-11 points above the
+majority baseline. Removing clairvoyance and adding the safe-set target changed the failure
+mode from memorisation to underfitting.
+
+**DAgger did its job, with one dip.** Each round of letting the clone drive raised the next
+clone's clear (0.246 -> 0.191 -> 0.352) and c2 is the only one that keeps the earlier rounds.
+c1's regression is unexplained and n=256 gives about +-0.03, so the dip is real but small.
+
+### The label is noisy, and that is not the binding constraint
+
+`planning_oracle.py --repeat-labels 3` now decides three times on each state with fresh
+perturbation draws. Over 10,800 oracle-driven states on fresh seeds (8,000,000+):
+
+```
+the oracle repeats its own choice          0.561
+its pick is in another draw's safe set     0.805
+safe-set Jaccard between two draws         0.274
+plurality of three draws                   0.752   (biased up at three draws)
+mean safe-set size                         4.88 of 16 actions
+```
+
+So roughly 44% of the argmax label is noise, and the top-1 ceiling for any learner is between
+0.561 (the collision probability, sum_a p_a^2) and about 0.75.
+
+**Measured against that ceiling, on those same states:**
+
+| | top-1 vs a fresh draw | in safe set |
+|---|---:|---:|
+| the oracle itself | 0.561 | 0.805 |
+| c2 | 0.289 | 0.538 |
+| v21's champion (no cloning) | 0.152 | 0.394 |
+
+**Cloning moved the policy most of the way from v21 to halfway, and then stopped.** c2 is
+nowhere near the noise floor on either measure, so the label's noise is not what is holding it
+back. Combined with train-under-validation, that points at capacity or optimisation, not at
+the target.
+
+**A claim I made mid-session and then disproved.** On seeing 4.88 safe actions per state I
+told the user the argmax label was probably so noisy that c2's 0.315 was already near its
+ceiling, and that the wider network I had proposed would buy nothing. The measurement says the
+opposite: the ceiling is 0.561+, c2 is at 0.289, and the gap is large. The original reading --
+that a 256x256 actor underfits 436k pairs -- survives, and the width experiment below
+confirms it. Both claims were cheap to make and only one of them was measured; this is the
+second time in two days that a story assembled from a single number has had to be withdrawn.
+
+### Width fixes the underfitting, and does not yet show up in the clear rate
+
+`c2-wide`: the same r0+r1+r2 traces, the same seed and hyperparameters, a 512x512 actor
+instead of 256x256, the critic carried over verbatim. Only the width differs.
+
+| | c2 (256x256) | c2-wide (512x512) |
+|---|---:|---:|
+| train top-1 | 0.348 | 0.502 |
+| val top-1 | 0.315 | **0.416** |
+| val in safe set | 0.549 | **0.651** |
+| round-29 clear, 256 seeds | 0.352 | 0.402 |
+| retention 23-28 completion | .92 .89 .88 .78 .76 .74 | .93 .89 .92 .79 .76 .78 |
+
+**The imitation gain is decisive and the gameplay gain is not.** Validation agreement rises 10
+points over ~44,000 held-out pairs, which is far outside any sampling noise, and the safe-set
+rate rises 10 points with it. The clear rate rises 5.1 points, and the paired 95% interval is
+**[-3.1, +13.7]** (65 seeds better, 52 worse, 139 unchanged) -- it spans zero, so on 256 seeds
+this is not a distinguishable improvement in play.
+
+So capacity was the limit on *imitating* the oracle, as first proposed and then wrongly
+withdrawn. Whether better imitation buys better play is a separate question this run does not
+settle, and the clear rate is the one that decides anything. Both clones are still 27 points
+below the source policy they were cloned into (0.672).
+
+The clone is now fitting rather than underfitting (train 0.502 against val 0.416), and the
+label ceiling is 0.561+, so there is room left in both data and width. The coherent next run
+is the compound one -- more DAgger rounds *and* the wide actor,
+`cloud/asteroids-holiday.sh --rounds 6 --net-arch 512,512` -- judged on clear rate, not on
+agreement. If clear stays flat while agreement keeps climbing, the remaining gap is the
+lookahead itself, which cloning cannot transfer and which would point at search at inference.
+
+### Tooling
+
+- `--repeat-labels N` (above), `clone_oracle.py --net-arch` (rebuilds the actor at a new width
+  and carries the critic over verbatim, so PPO does not later fine-tune against a random value
+  function; the width is verified to survive the save/load round trip into real training), and
+  `holiday_pipeline.py --rounds N`, which continues from the last clone on an existing root
+  because every step is already skipped when its output exists.
+- Seed blocks now in use and not to be recorded on again: 10000-10255 held-out panel,
+  1,000,000,000+ benchmarks and diagnostics, 5-7,000,000 r0-r2, 8,000,000 the calibration.
 
 ---
 
