@@ -4,7 +4,70 @@ Running record of what has been changed and what was learned, so work can resume
 sessions without re-deriving it. Newest context at the top; the detail is chronological
 below.
 
-Last updated: 2026-09-13.
+Last updated: 2026-09-14.
+
+---
+
+## 2026-09-14: v21 promoted to round 30, and every era measured on one fixed task
+
+**v21 cleared round 29 at episode 357,500** -- the rung this project had been stuck on since
+v15. Three consecutive 256-episode pools walked into the gate rather than one spiking through
+it: clear 0.754 -> 0.770 -> 0.781 against 0.75, completion 0.880 -> 0.891 -> 0.901 against
+0.90, both gates passing together only on the third. It is now 382 evaluations into round 30,
+clear bouncing 0.64-0.70 with the champion at 0.766 -- which is what round 29 looked like at
+the start.
+
+The promotion is not just a favourable pool. Re-scored on the frozen 256-seed round-29
+benchmark, the current champion (episode 538,000) clears **0.746** against the source's 0.672,
+paired **+0.074 [0.000, +0.152]**, and against v21's own episode-134,500 champion **+0.094
+[+0.016, +0.176]**. The policy really did move; the second interval excludes zero and the
+first sits exactly on it.
+
+### Every surviving champion on the same task
+
+`scripts/benchmark_checkpoint.py` scores any observation version, so the whole line can be put
+on one frozen task: round 29 as shipped at 05f4e57, 256 held-out seeds from 1,000,000,832.
+This separates policy quality from the ladder changes underneath it, which rung-counting
+cannot.
+
+| era | champion | round-29 clear |
+|---|---:|---:|
+| v7 (v2 ladder, random fragments, obs v7) | ep 99,000 | 0.527 |
+| v13 (v2-detfrag, obs v8) | ep 87,500 | 0.512 |
+| v14 (v3 ladder, obs v9) | ep 54,500 | 0.645 |
+| v16 (v3, obs v10, full orbit share) | ep 157,500 | 0.527 |
+| v18 control candidate (obs v10) | -- | 0.648 |
+| v20 = v21's source (obs v10 widened to v11) | ep 31,500 | 0.672 |
+| v21 | ep 134,500 | 0.652 |
+| **v21, now** | **ep 538,000** | **0.746** |
+| c2 / c2-wide oracle clones | -- | 0.352 / 0.402 |
+| blind planning oracle (the ceiling) | -- | 0.922 |
+
+**The line is improving, and only over the whole period.** v7 -> now is **+0.219
+[+0.145, +0.297]**, comfortably outside noise, and closes about 45% of the original 39.5-point
+gap to the reactive ceiling. Almost no individual step is distinguishable at n=256, though:
+v20 vs v14 is +0.027 [-0.055, +0.106], and v21-now vs v20 touches zero. Progress is only
+visible by accumulating it.
+
+**Two versions produced nothing measurable.** v13 vs v7 is -0.016 [-0.102, +0.070] and v16 vs
+v7 is **+0.000** [-0.082, +0.082], between them about 245,000 episodes. The gains came from
+v14 (+0.117 over v7) and the slow v18-v21 grind.
+
+**v16 is a measured regression from v14: -0.117 [-0.031, -0.203].** v16 trained 203,500
+episodes *specifically on round 29* at orbit's full 8.3% share and ends up worse on the ramped
+round 29 than v14's champion, which never trained on round 29 at all. That is retrospective
+support for the ramp decision of 2026-09-06 -- saturation is the problem, not exposure -- and
+it means a large block of compute actively damaged the policy. Worth remembering before
+pointing a run at a rung it cannot yet hold.
+
+**What actually moved the number was the task, not the optimizer.** The two clear jumps sit on
+the v3 expressive ladder (v14) and the orbit ramp (v18). Since the benchmark is frozen, a
+curriculum change can only raise it by producing a genuinely better policy -- so curriculum
+design is the productive lever, which is the same conclusion the three hyperparameter nulls
+reached from the other side.
+
+**Cost.** v21 has spent 538,000 episodes and 208M decisions for its +0.074. The whole line
+from v7 is well over 400M decisions for +0.219. Improvement is real, slow, and getting slower.
 
 ---
 
