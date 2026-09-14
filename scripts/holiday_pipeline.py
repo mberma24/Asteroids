@@ -41,8 +41,13 @@ RUN = "models/oracle-survival-v3-v22-oracle-clone"
 DROPIN = Path("/etc/systemd/system/asteroids.service.d/bridge.conf")
 RETENTION = [f"retention{r}" for r in range(23, 29)]
 # Seeds that must never be recorded: 10000-10255 is the held-out panel, 1,000,000,000+ the
-# benchmark, diagnostic and oracle-ceiling ranges. Each recording round gets its own block.
-RECORD_SEEDS = {"r0": 5_000_000, "r1": 6_000_000, "r2": 7_000_000}
+# benchmark, diagnostic and oracle-ceiling ranges, and 8,000,000+ the label-noise
+# calibration. Each recording round gets its own million.
+RECORD_SEED_BASE = 5_000_000
+
+
+def record_seed(index: int) -> int:
+    return RECORD_SEED_BASE + index * 1_000_000
 
 
 def log(message: str) -> None:
@@ -74,14 +79,19 @@ class Pipeline:
             "workers": 2 if smoke else 4,
             "record": {"candidates": 4 if smoke else 16, "horizon": 5 if smoke else 30,
                        "episodes": 2 if smoke else 100_000},
-            "hours": {"r0": None if smoke else args.hours_r0,
-                      "r1": None if smoke else args.hours_r1,
-                      "r2": None if smoke else args.hours_r2},
+            # One budget per round; the last one repeats for any round beyond the list.
+            "hours": None if smoke else [float(h) for h in args.hours.split(",")],
+            "rounds": args.rounds,
             "clone_epochs": 1 if smoke else 30,
             "bench_count": 4 if smoke else 256,
             "retention_count": 2 if smoke else 64,
             "threshold": args.threshold,
+            "net_arch": args.net_arch,
         }
+
+    def hours_for(self, index: int) -> float | None:
+        budgets = self.settings["hours"]
+        return budgets[min(index, len(budgets) - 1)] if budgets else None
 
     # -- infrastructure ------------------------------------------------------------------
 
@@ -130,7 +140,8 @@ class Pipeline:
             destination.with_suffix(".partial").rename(destination)
         return destination
 
-    def record(self, name: str, *, driver: Path | None) -> Path:
+    def record(self, index: int, *, driver: Path | None) -> Path:
+        name = f"r{index}"
         trace = self.root / f"{name}.npz"
         summary = self.root / f"{name}.json"
         if self.step_done(trace, summary):
@@ -138,7 +149,7 @@ class Pipeline:
         self.check_fail(name)
         settings = self.settings["record"]
         command = [self.python, "scripts/planning_oracle.py", "--stages", STAGE,
-                   "--seeds", settings["episodes"], "--seed-start", RECORD_SEEDS[name],
+                   "--seeds", settings["episodes"], "--seed-start", record_seed(index),
                    "--candidates", settings["candidates"], "--horizon", settings["horizon"],
                    "--workers", self.settings["workers"], "--blind",
                    "--curriculum", CURRICULUM, "--layout-from", self.root / "source",
@@ -146,7 +157,7 @@ class Pipeline:
         if driver is not None:
             command += ["--driver", driver]
         started = time.time()
-        self.run(command, hours=self.settings["hours"][name])
+        self.run(command, hours=self.hours_for(index))
         if not trace.exists():
             raise RuntimeError(f"{name}: no trace written -- fewer than 20 episodes finished")
         with np.load(trace) as data:
@@ -163,10 +174,13 @@ class Pipeline:
             return destination
         self.check_fail(name)
         shutil.rmtree(destination, ignore_errors=True)
-        self.run([self.python, "scripts/clone_oracle.py", "--source", self.root / "source",
-                  "--output", destination, "--traces", *traces,
-                  "--epochs", self.settings["clone_epochs"],
-                  "--threads", self.settings["workers"]])
+        command = [self.python, "scripts/clone_oracle.py", "--source", self.root / "source",
+                   "--output", destination, "--traces", *traces,
+                   "--epochs", self.settings["clone_epochs"],
+                   "--threads", self.settings["workers"]]
+        if self.settings["net_arch"]:
+            command += ["--net-arch", self.settings["net_arch"]]
+        self.run(command)
         return destination
 
     def benchmark(self, checkpoint: Path) -> dict:
@@ -195,8 +209,14 @@ class Pipeline:
     def decide(self, scores: dict[str, dict]) -> Path | None:
         decision = self.root / "decision.json"
         if decision.exists():
-            chosen = read_json(decision)["chosen"]
-            return Path(chosen) if chosen else None
+            previous = read_json(decision)
+            # A continuation run adds clones; a decision made over fewer of them is stale.
+            if len(previous.get("scores", {})) >= len(scores):
+                chosen = previous["chosen"]
+                return Path(chosen) if chosen else None
+            shutil.move(str(decision), str(self.root / f"decision-{len(previous['scores'])}"
+                                           f"-clones.json"))
+            shutil.rmtree(self.root / "best-clone", ignore_errors=True)
         self.check_fail("decide")
         best = max(scores, key=lambda k: scores[k]["current"]["clear_rate"])
         clear = scores[best]["current"]["clear_rate"]
@@ -280,8 +300,8 @@ class Pipeline:
         scores: dict[str, dict] = {}
         traces: list[Path] = []
         driver: Path | None = None
-        for index in range(3):
-            traces.append(self.record(f"r{index}", driver=driver))
+        for index in range(self.settings["rounds"]):
+            traces.append(self.record(index, driver=driver))
             clone = self.clone(f"c{index}", traces)
             scores[f"c{index}"] = self.benchmark(clone)
             write_json(self.root / "scores.json", scores)
@@ -313,9 +333,13 @@ def main() -> None:
                         help="benchmark config snapshots (default: the VM path)")
     parser.add_argument("--threshold", type=float, default=0.40)
     parser.add_argument("--learning-rate", type=float, default=5e-5 / 3)
-    parser.add_argument("--hours-r0", type=float, default=10.0)
-    parser.add_argument("--hours-r1", type=float, default=5.0)
-    parser.add_argument("--hours-r2", type=float, default=5.0)
+    parser.add_argument("--rounds", type=int, default=3,
+                        help="DAgger rounds; raising it on an existing --root continues "
+                             "from the last clone rather than starting over")
+    parser.add_argument("--hours", default="10,5,5",
+                        help="recording budget per round; the last value repeats")
+    parser.add_argument("--net-arch", default=None,
+                        help="rebuild the clone's actor with this hidden stack, e.g. 512,512")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--local", action="store_true")
     parser.add_argument("--fail-at", default=None)

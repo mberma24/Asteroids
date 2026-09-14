@@ -154,6 +154,48 @@ def _write_trace(path: str, chunks: dict[str, list]) -> None:
     temporary.replace(destination)
 
 
+_POPCOUNT = sum(((np.arange(1 << 16, dtype=np.uint32) >> bit) & 1).astype(np.uint8)
+                for bit in range(16))
+
+
+def label_noise(actions: np.ndarray, safe: np.ndarray, num_actions: int) -> dict:
+    """How reproducible the oracle's own label is, from repeated decisions on one state.
+
+    `actions` and `safe` are (states, repeats). The search draws its perturbations fresh
+    each time, so its argmax is a sample from a distribution over actions rather than a
+    function of the state. `self_agreement` estimates the collision probability of that
+    distribution, sum_a p_a^2, which is a *lower* bound on the top-1 accuracy a perfect
+    learner could reach against a fresh label (that ceiling is max_a p_a >= sum_a p_a^2).
+    So a cloner scoring above self-agreement is not thereby beating the oracle.
+    """
+    states, repeats = actions.shape
+    if states == 0 or repeats < 2:
+        return {}
+    agree, in_other, jaccard = [], [], []
+    for i in range(repeats):
+        for j in range(repeats):
+            if i == j:
+                continue
+            in_other.append((safe[:, j].astype(np.uint32) >> actions[:, i]) & 1)
+            if i < j:
+                agree.append(actions[:, i] == actions[:, j])
+                union = _POPCOUNT[safe[:, i] | safe[:, j]].astype(np.float64)
+                inter = _POPCOUNT[safe[:, i] & safe[:, j]].astype(np.float64)
+                jaccard.append(np.divide(inter, union, out=np.ones_like(union),
+                                         where=union > 0))
+    onehot = actions[:, :, None] == np.arange(num_actions)[None, None, :]
+    return {
+        "states": int(states), "repeats": int(repeats),
+        "self_agreement": float(np.mean(np.concatenate(agree))),
+        "chosen_in_other_safe_set": float(np.mean(np.concatenate(in_other))),
+        "safe_set_jaccard": float(np.mean(np.concatenate(jaccard))),
+        # Biased upward at small `repeats` -- the most frequent of N draws overstates the
+        # true mode -- so read it as an optimistic reading of the ceiling, not an estimate.
+        "plurality_share": float(np.mean(onehot.sum(axis=1).max(axis=1) / repeats)),
+        "mean_safe_set_size": float(np.mean(_POPCOUNT[safe])),
+    }
+
+
 def layout_from(checkpoint: str | None) -> dict:
     """The observation layout a recording must use to be fed back into `checkpoint`."""
     if not checkpoint:
@@ -165,32 +207,38 @@ def layout_from(checkpoint: str | None) -> dict:
     return layout
 
 
-def run_seed(args) -> dict:
-    (stage_index, seed, candidates, horizon, epsilon, curriculum, record, blind,
-     layout, driver) = args
-    spec = load_curriculum(curriculum)
+def run_seed(job: dict) -> dict:
+    stage_index, layout = job["stage"], job["layout"]
+    spec = load_curriculum(job["curriculum"])
     env = _stage_env(spec, stage_index, layout)
-    observation, _ = env.reset(seed)
-    oracle = PlanningOracle(env, candidates=candidates, horizon=horizon,
-                            epsilon=epsilon, seed=seed, blind=blind)
+    observation, _ = env.reset(job["seed"])
+    oracle = PlanningOracle(env, candidates=job["candidates"], horizon=job["horizon"],
+                            epsilon=job["epsilon"], seed=job["seed"], blind=job["blind"])
+    repeats = max(1, int(job.get("repeat_labels", 1)))
+    record = job["record"]
     policy = None
-    if driver:
+    if job.get("driver"):
         # DAgger: the policy under training steers, so the states visited are the ones it
         # actually reaches, and the oracle only supplies the label for each of them.
         import torch
         from asteroid_survival.rl.ppo import PPOController
         torch.set_num_threads(1)          # one worker per core; torch must not fan out
-        policy = PPOController(driver, device="cpu")
+        policy = PPOController(job["driver"], device="cpu")
         policy.reset()
     done = False
     info: dict = {}
     trace = []
     while not done:
-        action, safe = oracle.decide()
+        # Repeated decisions on the *same* state, each with fresh perturbation draws. The
+        # search is stochastic, so its argmax is a sample rather than a function of the
+        # state; how often two draws agree is the label noise a cloner cannot train away.
+        labels = [oracle.decide() for _ in range(repeats)]
+        action, safe = labels[0]
         if record:
             # The pair a behavioural-cloning run needs: what the policy sees, and what a
             # searcher with two seconds of verified lookahead does about it.
-            trace.append((observation.astype(np.float32), int(action), int(safe)))
+            trace.append((observation.astype(np.float32), int(action), int(safe),
+                          [a for a, _ in labels], [s for _, s in labels]))
         if policy is not None:
             action = policy(observation)
         observation, _, terminated, truncated, info = env.step(action)
@@ -200,13 +248,19 @@ def run_seed(args) -> dict:
     # Pack before returning. A list of 1265 Python floats per state costs ~32 bytes each;
     # as float32 it is 4, which is the difference between ~9 GB in the parent and ~0.5 GB.
     if trace:
-        packed = {"observations": np.stack([o for o, _, _ in trace]),
-                  "actions": np.asarray([a for _, a, _ in trace], dtype=np.int64),
-                  "safe": np.asarray([s for _, _, s in trace], dtype=np.uint16)}
+        packed = {"observations": np.stack([row[0] for row in trace]),
+                  "actions": np.asarray([row[1] for row in trace], dtype=np.int64),
+                  "safe": np.asarray([row[2] for row in trace], dtype=np.uint16)}
+        if repeats > 1:
+            packed["repeat_actions"] = np.asarray([row[3] for row in trace], dtype=np.int64)
+            packed["repeat_safe"] = np.asarray([row[4] for row in trace], dtype=np.uint16)
     else:
         packed = {"observations": np.zeros((0, 0), np.float32),
                   "actions": np.zeros((0,), np.int64), "safe": np.zeros((0,), np.uint16)}
-    return {"seed": seed, "trace": packed,
+        if repeats > 1:
+            packed["repeat_actions"] = np.zeros((0, repeats), np.int64)
+            packed["repeat_safe"] = np.zeros((0, repeats), np.uint16)
+    return {"seed": job["seed"], "trace": packed,
             "cleared": bool(metrics.get("completed_stage")),
             "survival_time": float(metrics["survival_time"]),
             "completion": min(1.0, float(metrics["survival_time"]) / limit),
@@ -236,19 +290,31 @@ def main() -> None:
     parser.add_argument("--driver", metavar="CHECKPOINT",
                         help="let this PPO checkpoint steer while the oracle only labels "
                              "(DAgger); the oracle's clear rate is then the driver's")
+    parser.add_argument("--repeat-labels", type=int, default=1, metavar="N",
+                        help="decide N times per state with fresh draws, to measure how "
+                             "much of the label is noise; costs N times the rollouts")
     args = parser.parse_args()
+    if args.repeat_labels > 1 and not args.record:
+        parser.error("--repeat-labels needs --record: the repeated labels are written "
+                     "beside the observations they belong to")
 
     layout = layout_from(args.layout_from)
     report = {"candidates": args.candidates, "horizon": args.horizon,
               "epsilon": args.epsilon, "seeds": args.seeds, "blind": bool(args.blind),
-              "layout": layout, "driver": args.driver, "stages": {}}
+              "layout": layout, "driver": args.driver,
+              "repeat_labels": args.repeat_labels, "stages": {}}
     for stage_index in [int(x) for x in args.stages.split(",")]:
-        jobs = [(stage_index, s, args.candidates, args.horizon, args.epsilon,
-                 args.curriculum, bool(args.record), bool(args.blind), layout, args.driver)
+        jobs = [{"stage": stage_index, "seed": s, "candidates": args.candidates,
+                 "horizon": args.horizon, "epsilon": args.epsilon,
+                 "curriculum": args.curriculum, "record": bool(args.record),
+                 "blind": bool(args.blind), "layout": layout, "driver": args.driver,
+                 "repeat_labels": args.repeat_labels}
                 for s in range(args.seed_start, args.seed_start + args.seeds)]
         results = []
         chunks: dict[str, list] = {"observations": [], "actions": [], "safe": [],
                                    "episodes": []}
+        if args.repeat_labels > 1:
+            chunks.update(repeat_actions=[], repeat_safe=[])
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
             for done, result in enumerate(pool.map(run_seed, jobs), start=1):
                 trace = result.pop("trace")
@@ -274,6 +340,17 @@ def main() -> None:
             _write_trace(args.record, chunks)
             print(f"  recorded {sum(len(c) for c in chunks['actions']):,} "
                   f"(observation, action) pairs -> {args.record}", flush=True)
+        if args.repeat_labels > 1 and chunks["repeat_actions"]:
+            noise = label_noise(np.concatenate(chunks["repeat_actions"]),
+                                np.concatenate(chunks["repeat_safe"]),
+                                len(_stage_env(load_curriculum(args.curriculum),
+                                               stage_index, layout).actions))
+            report.setdefault("label_noise", {})[str(stage_index)] = noise
+            print(f"  label noise: the oracle repeats its own choice "
+                  f"{noise['self_agreement']:.3f} of the time over {noise['states']:,} "
+                  f"states; its pick is in another draw's safe set "
+                  f"{noise['chosen_in_other_safe_set']:.3f}, safe-set Jaccard "
+                  f"{noise['safe_set_jaccard']:.3f}", flush=True)
         report["stages"][str(stage_index)] = {
             "name": name, "clear_rate": clear, "completion": completion,
             "mean_survival": statistics.fmean(r["survival_time"] for r in results),

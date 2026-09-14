@@ -55,6 +55,41 @@ def logits_of(model, observations: torch.Tensor) -> torch.Tensor:
     return model.policy.get_distribution(observations).distribution.logits
 
 
+def transfer_matching(target, source) -> int:
+    """Copy every parameter whose name and shape survive the rebuild. Returns the count."""
+    available = source.state_dict()
+    copied = 0
+    with torch.no_grad():
+        for name, tensor in target.state_dict().items():
+            other = available.get(name)
+            if other is not None and other.shape == tensor.shape:
+                tensor.copy_(other)
+                copied += 1
+    return copied
+
+
+def rebuild_policy(model, net_arch: list[int]) -> dict:
+    """Give the actor a new hidden stack, keeping the critic the source spent 260k episodes on.
+
+    The actor's width is the one thing in-place cloning cannot change, and the critic is
+    worth keeping: PPO would otherwise fine-tune against a randomly initialised value
+    function. The value stack and head keep their shapes, so `transfer_matching` carries
+    them over verbatim and only the policy stack and action head start fresh.
+    """
+    old = model.policy
+    kwargs = dict(model.policy_kwargs or {})
+    architecture = dict(kwargs.get("net_arch") or {})
+    kwargs["net_arch"] = {"pi": list(net_arch),
+                          "vf": list(architecture.get("vf", [256, 256]))}
+    policy = model.policy_class(model.observation_space, model.action_space,
+                                model.lr_schedule, **kwargs)
+    copied = transfer_matching(policy, old)
+    model.policy = policy.to(model.device)
+    model.policy_kwargs = kwargs
+    return {"net_arch": kwargs["net_arch"], "parameters_transferred": copied,
+            "parameters_total": len(policy.state_dict())}
+
+
 def losses(logits: torch.Tensor, actions: torch.Tensor, safe: torch.Tensor,
            set_weight: float) -> tuple[torch.Tensor, dict[str, float]]:
     log_probs = torch.log_softmax(logits, dim=-1)
@@ -95,6 +130,10 @@ def main() -> None:
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--net-arch", default=None, metavar="W,W",
+                        help="rebuild the actor with this hidden stack (e.g. 512,512) "
+                             "instead of training the source's in place; the critic is "
+                             "kept. Passing the source's own widths changes nothing.")
     args = parser.parse_args()
 
     torch.set_num_threads(args.threads)
@@ -129,6 +168,12 @@ def main() -> None:
 
     model = PPO.load(source / "model.zip", device="cpu")
     report["source_agreement_val"] = agreement(model, **split["val"])
+    if args.net_arch:
+        report["rebuilt"] = rebuild_policy(model, [int(w) for w in args.net_arch.split(",")])
+        # A fresh actor has no behaviour to report against; the source's reading above is
+        # still the right comparison, and this one says where training starts from.
+        report["rebuilt_agreement_val"] = agreement(model, **split["val"])
+        print(json.dumps(report["rebuilt"]), flush=True)
     policy = model.policy
     params = list(policy.mlp_extractor.policy_net.parameters()) + list(
         policy.action_net.parameters())
@@ -183,7 +228,8 @@ def main() -> None:
     metadata = copy.deepcopy(metadata)
     metadata.update(episodes=0, environment_steps=0, parent_checkpoint=str(source),
                     cloned_from={"traces": args.traces, "pairs": report["pairs"],
-                                 "val_agreement": report["final_agreement_val"]})
+                                 "val_agreement": report["final_agreement_val"],
+                                 "net_arch": report.get("rebuilt", {}).get("net_arch")})
     (destination / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n",
                                                encoding="utf-8")
     (destination / "clone-report.json").write_text(json.dumps(report, indent=2) + "\n",
