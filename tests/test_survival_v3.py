@@ -418,3 +418,24 @@ def test_bridge31_is_a_different_task_so_it_must_be_forked_not_resumed():
     action_fire = load_curriculum("configs/rl-survival-v3-bridge31-action-fire.toml")
     assert task_hash(action_fire) == task_hash(_bridge31())
     assert action_fire.observation_version == 11
+
+
+def test_promotion_gates_are_not_part_of_the_task_identity():
+    """A gate change must be resumable: it says when to advance, not what the task is.
+
+    `--resume` rejects a checkpoint whose `task_hash` moved, and the service resumes on every
+    restart, so if the gates were hashed then correcting one would crash-loop a live run.
+    """
+    from dataclasses import replace
+
+    from asteroid_survival.rl.curriculum import task_hash
+
+    v3 = _v3()
+    for field, value in (("promotion_completion", 0.5), ("promotion_clear_rate", 0.1),
+                         ("promotion_window", 8), ("evaluation_episodes", 128)):
+        assert task_hash(replace(v3, **{field: value})) == task_hash(v3), field
+    # The live run carries the corrected completion gate and is still the same task.
+    live = load_curriculum("configs/rl-survival-v3-action-fire.toml")
+    assert live.promotion_completion == 0.86
+    assert live.promotion_clear_rate == 0.75
+    assert task_hash(live) == task_hash(v3)

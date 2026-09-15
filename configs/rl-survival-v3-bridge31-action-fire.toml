@@ -2,3 +2,5 @@
 [curriculum]
 extends = "rl-survival-v3-bridge31.toml"
 observation_version = 11
+# Matches the live run's corrected completion gate; see rl-survival-v3-action-fire.toml.
+promotion_completion = 0.86
