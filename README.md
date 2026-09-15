@@ -546,6 +546,9 @@ and `curriculum_state.json`. Print held-out progress directly in the terminal wi
 ./run.sh graph models/my-run                 # completion + survival on one graph
 ./run.sh graph models/my-run completion      # completion only
 ./run.sh graph models/my-run survival        # survival only
+./run.sh graph models/my-run smooth          # 5-evaluation moving average, per round
+./run.sh graph models/my-run smooth 3        # 15-evaluation average (3 × the default)
+./run.sh graph models/my-run smooth=10       # wider 10-evaluation moving average
 GRAPH_HEIGHT=30 ./run.sh graph models/my-run # taller chart
 ```
 

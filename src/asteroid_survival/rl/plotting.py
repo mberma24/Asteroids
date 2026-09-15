@@ -55,11 +55,31 @@ def _progress_records(run_dir: str | Path) -> list[dict]:
     return records
 
 
+def _smoothed_values(values: list[tuple[int, str, float]], window: int) -> list[tuple[int, float]]:
+    """Return a trailing moving average, without blending different curriculum rounds."""
+    if window <= 1:
+        return [(step, value) for step, _, value in values]
+    smoothed = []
+    history: list[float] = []
+    previous_stage = None
+    for step, stage, value in values:
+        if stage != previous_stage:
+            history = []
+            previous_stage = stage
+        history.append(value)
+        if len(history) > window:
+            history.pop(0)
+        smoothed.append((step, sum(history) / len(history)))
+    return smoothed
+
+
 def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
-                    height: int = 20, color: bool = False) -> str:
+                    height: int = 20, color: bool = False, smooth: int = 0) -> str:
     """Render held-out completion and survival history directly in a terminal."""
     if view not in {"completion", "survival", "overall", "both"}:
         raise ValueError(f"unknown graph view: {view}")
+    if smooth < 0:
+        raise ValueError("smoothing window must be positive")
     records = _progress_records(run_dir)
     x_field = ("environment_steps"
                if all(record.get("environment_steps") is not None for record in records)
@@ -77,8 +97,10 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
         chosen = tuple(item for item in chosen if item[0] == view)
     series = []
     for metric, symbol, label in chosen:
-        values = [(step, _rate(stage, metric)) for step, _, stage in rows]
-        values = [(step, value) for step, value in values if value is not None]
+        raw_values = [(step, name, _rate(stage, metric)) for step, name, stage in rows]
+        raw_values = [(step, name, value) for step, name, value in raw_values
+                      if value is not None]
+        values = _smoothed_values(raw_values, smooth)
         if values:
             series.append((metric, symbol, label, values))
     if not series:
@@ -167,6 +189,8 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
         legend += (f"   {painted('●', '97')} Evaluation"
                    f"   {painted('◆', '95')} Lines meet"
                    f"   {painted('⣿', '32')} Promotion")
+    if smooth > 1:
+        legend += f"   {smooth}-evaluation moving average (per round)"
     output = [f"Asteroids training progress — {Path(run_dir).name}", legend]
     ticks = {0, chart_h - 1} | {round(fraction * (chart_h - 1))
                                 for fraction in (0.25, 0.5, 0.75)}
@@ -214,8 +238,9 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
                      if dense else ""))
     current_stage = rows[-1][1]
     for metric, symbol, label, values in series:
-        current_values = [(step, _rate(stage, metric)) for step, name, stage in rows
+        current_values = [(step, name, _rate(stage, metric)) for step, name, stage in rows
                           if name == current_stage and _rate(stage, metric) is not None]
+        current_values = _smoothed_values(current_values, smooth)
         first, last = current_values[0][1], current_values[-1][1]
         output.append(f"  {symbol} {label}: {first:.1%} → {last:.1%} "
                       f"({(last - first) * 100:+.1f} pp; {len(current_values)} evaluations "

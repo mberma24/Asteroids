@@ -629,20 +629,29 @@ cmd_finish() {        # continue until every curriculum stage is mastered (or sa
 }
 
 cmd_graph() {
-  local dir view
-  case "${1:-}" in
-    completion|survival|overall|both)
-      dir="$(ls -dt models/*/ 2>/dev/null | head -1)"
-      view="$1"
-      ;;
-    *)
-      dir="${1:-$(ls -dt models/*/ 2>/dev/null | head -1)}"
-      view="${2:-both}"
-      ;;
-  esac
+  local dir="" view="both" smooth="${GRAPH_SMOOTH:-0}" arg smooth_requested=0
+  for arg in "$@"; do
+    case "$arg" in
+      completion|survival|overall|both) view="$arg" ;;
+      smooth) smooth=5; smooth_requested=1 ;;
+      smooth=*) smooth="${arg#smooth=}" ;;
+      [0-9]*)
+        if [ "$smooth_requested" -eq 1 ]; then smooth=$((5 * arg))
+        elif [ -z "$dir" ]; then dir="$arg"
+        else echo "unknown graph argument: $arg" >&2; exit 2
+        fi
+        ;;
+      *)
+        if [ -z "$dir" ]; then dir="$arg"
+        else echo "unknown graph argument: $arg" >&2; exit 2
+        fi
+        ;;
+    esac
+  done
+  dir="${dir:-$(ls -dt models/*/ 2>/dev/null | head -1)}"
   dir="${dir%/}"
   $PY -m asteroid_survival graph --run "$dir" --view "$view" \
-    --height "${GRAPH_HEIGHT:-20}"
+    --height "${GRAPH_HEIGHT:-20}" --smooth "$smooth"
 }
 
 cmd_pull() {         # copy a run's champion down from the training box, to preview locally
@@ -1195,7 +1204,7 @@ Train
 Inspect
   ./run.sh status [dir]         training progress, newest run by default
   ./run.sh follow [dir]         status once, then stream evaluations as they land
-  ./run.sh graph [dir] [view]   terminal graph (`both`, `completion`, `survival`, or `overall`)
+  ./run.sh graph [dir] [view] [smooth [N]|smooth=N]  terminal graph; `smooth N` is N × 5 evaluations
   ./run.sh baseline [N]         score the greedy controller
   ./run.sh test                 run the test suite
   ./run.sh test-team CHECKPOINT score a shared team policy (SHIPS/LEVEL overrides)

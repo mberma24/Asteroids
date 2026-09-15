@@ -628,6 +628,9 @@ def main(argv: list[str] | None = None) -> int:
     graph_parser.add_argument(
         "--height", type=int, default=20,
         help="chart rows (8-40; default 20)")
+    graph_parser.add_argument(
+        "--smooth", type=int, default=0, metavar="EVALUATIONS",
+        help="trailing moving-average window; resets at each round")
     preview_parser = sub.add_parser(
         "preview", help="watch the best evaluated checkpoint from a curriculum run")
     preview_parser.add_argument("target", type=Path, help="run directory or checkpoint")
@@ -705,7 +708,8 @@ def main(argv: list[str] | None = None) -> int:
         from .rl.plotting import format_progress
         width = shutil.get_terminal_size(fallback=(100, 24)).columns
         print(format_progress(args.run, view=args.view, width=width, height=args.height,
-                              color=sys.stdout.isatty() and "NO_COLOR" not in os.environ))
+                              color=sys.stdout.isatty() and "NO_COLOR" not in os.environ,
+                              smooth=args.smooth))
         return 0
     if args.command == "arena":
         controllers = ["human"] + [name for name in args.opponents.split(",") if name]
