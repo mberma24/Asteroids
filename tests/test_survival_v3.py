@@ -355,3 +355,66 @@ def test_a_rock_flying_straight_gets_no_turn_rate():
     assert abs(turn_rate(straight, Vec2(110.0, 50.0), 900, 900, 1 / 15)) < 1e-9
     assert turn_rate(None, Vec2(0.0, 0.0), 900, 900, 1 / 15) == 0.0
     assert turn_rate([(1.0, 1.0)], Vec2(2.0, 2.0), 900, 900, 1 / 15) == 0.0
+
+
+def _bridge31():
+    return load_curriculum("configs/rl-survival-v3-bridge31.toml")
+
+
+def test_bridge31_matches_v3_everywhere_except_rounds_31_32():
+    """The bridged ladder is a copy of v3 plus one phase, so the copy must not drift.
+
+    Rounds are compared through `game_config`, which is what training actually sees, so a
+    stray edit to any ramp constant in the copy fails here rather than silently producing a
+    different task.
+    """
+    v3, bridged = _v3(), _bridge31()
+    assert len(bridged.stages) == len(v3.stages) == 96
+    assert bridged.reward == v3.reward
+    for index in range(96):
+        if index + 1 in (31, 32):
+            continue
+        assert (bridged.stages[index].game_config(bridged.base)
+                == v3.stages[index].game_config(v3.base)), f"round {index + 1}"
+        assert bridged.stages[index].name == v3.stages[index].name
+
+
+def test_bridge31_softens_the_all_large_step_without_adding_rounds():
+    bridged = _bridge31()
+    sizes = {n: bridged.stages[n - 1].asteroid_size for n in (29, 30, 31, 32, 33, 39, 40)}
+    assert sizes[29] == sizes[30] == [2, 3, 3, 3]              # unchanged, 3/4 large
+    assert sizes[31] == sizes[32] == [2, 3, 3, 3, 3, 3, 3, 3]  # 7/8 large, the new rung
+    assert sizes[33] == sizes[39] == sizes[40] == 3            # all large, one round later
+    # The step is genuinely intermediate rather than a relabelling.
+    for round_number in (31, 32):
+        large = sizes[round_number].count(3) / len(sizes[round_number])
+        assert 0.75 < large < 1.0, round_number
+
+
+def test_bridge31_leaves_the_orbit_ramp_and_every_other_knob_alone():
+    v3, bridged = _v3(), _bridge31()
+    for index in range(28, 96):
+        stage, original = bridged.stages[index], v3.stages[index]
+        assert len(set(stage.patterns)) == 12, f"round {index + 1}"
+        assert _orbit_share(stage) == _orbit_share(original), f"round {index + 1}"
+        assert stage.linear_probability == original.linear_probability
+    for index in (30, 31):                                     # rounds 31-32, the new phase
+        for field in ("min_speed", "max_speed", "amplitude_min", "amplitude_max",
+                      "wavelength_min", "wavelength_max", "spawn_interval", "spawn_spread",
+                      "initial_asteroids"):
+            assert math.isclose(getattr(bridged.stages[index], field),
+                                getattr(v3.stages[index], field), abs_tol=1e-9), field
+
+
+def test_bridge31_is_a_different_task_so_it_must_be_forked_not_resumed():
+    """`--resume` compares `task_hash` over the whole ladder and would reject this file.
+
+    Deployment therefore has to go through INITIALIZE_FROM. Pinning it here so nobody
+    points a resuming service at the bridged ladder and gets a crash loop.
+    """
+    from asteroid_survival.rl.curriculum import task_hash
+
+    assert task_hash(_bridge31()) != task_hash(_v3())
+    action_fire = load_curriculum("configs/rl-survival-v3-bridge31-action-fire.toml")
+    assert task_hash(action_fire) == task_hash(_bridge31())
+    assert action_fire.observation_version == 11

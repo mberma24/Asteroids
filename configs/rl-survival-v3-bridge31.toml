@@ -1,0 +1,162 @@
+# Survival v3 with the round-31 composition step bridged.
+#
+# This file is `rl-survival-v3.toml` with ONE extra [[progression.phases]] block; everything
+# else is copied verbatim and `test_bridge31_matches_v3_everywhere_except_rounds_31_32` pins
+# that, so the copy cannot drift. It is a separate file rather than an edit because changing
+# the live ladder changes `task_hash`, which `--resume` rejects -- the running service resumes
+# on every restart and would crash-loop. Deploy it by forking with INITIALIZE_FROM instead.
+#
+# Survival v3: from round 28 the ladder gets harder by expressing the pattern, not by going
+# faster. Rounds 1-27 are inherited unchanged from rl-survival-v3-foundation.toml.
+#
+# Why. Measured on the simulator, v2's late rounds do not read as shaped motion. By round 96
+# a rock's sideways swing speed is 1.77x its forward speed on a 1.9s period, so it vibrates
+# across the arena rather than tracing a path; and at round 27, where training actually sits,
+# the mean swing is 24px, about one medium asteroid across, so the motion is nearly straight
+# over any horizon the agent can act on.
+#
+# So three slopes change here and nothing else does. Forward speed grows at half its old
+# rate, amplitude grows about twice as fast, and the period grows instead of shrinking. Spawn
+# interval, spread and opening count keep v2's slopes and land on v2's round-96 values.
+#
+#   round      speed      amplitude       period    mean swing   swing/forward
+#      28    54-83        3-45        3.83-4.98        24 px         0.51
+#      52    67-103      22-128       4.39-5.55        75 px         1.12
+#      96    90-140      56-280       5.40-6.60       168 px         1.53
+#
+# The trade, stated rather than discovered later: the top of this ladder is more legible than
+# v2's. Half-second linear prediction error at round 96 is a p90 of 33px against v2's 144px,
+# which puts it near v2's round 52. Above that point the added difficulty is rock size, count
+# and spawn rate, which this file does not touch. That was the deliberate choice: a rock that
+# traces one big arc beats a rock that buzzes.
+#
+# Every `_start` below is v2's value at round 28 to five decimals, so the ladder is
+# continuous across the seam. `extends` appends stages and does not inherit [progression],
+# so every knob has to be restated here -- including `spawn_safe_radius` and
+# `spawn_safe_seconds`, which are the only two that silently default to zero and would
+# disable the spawn clearance guard entirely.
+[curriculum]
+extends = "rl-survival-v3-foundation.toml"
+
+[progression]
+rounds = 69
+name_prefix = "survival-v3-round"
+survival = true
+patterns = []
+linear_probability = 1.0
+movement_enabled = true
+ship_invulnerable = false
+
+min_speed_start = 54.42101
+min_speed_step = 0.52631
+max_speed_start = 82.90532
+max_speed_step = 0.83158
+amplitude_min_start = 3.41064
+amplitude_min_step = 0.77337
+amplitude_max_start = 45.47367
+amplitude_max_step = 3.44892
+# Positive, unlike every other ladder in this project: the period grows so the shape has room
+# to be seen. Max steps faster than min, so wavelength_max >= wavelength_min holds throughout.
+wavelength_min_start = 3.83367
+wavelength_min_step = 0.02303
+wavelength_max_start = 4.97697
+wavelength_max_step = 0.02387
+spawn_interval_start = 1.64468
+spawn_interval_step = -0.01316
+spawn_spread_start = 128.50532
+spawn_spread_step = -1.53684
+initial_asteroids_start = 11.41064
+initial_asteroids_step = 0.12632
+spawn_safe_radius = 60.0
+spawn_safe_seconds = 1.8
+max_seconds_start = 30.0
+max_seconds_step = 0.0
+no_hit_seconds_start = 0.0
+no_hit_seconds_step = 0.0
+promotion_accuracy = 0.05
+
+# `orbit` is ramped in rather than switched on. Measured on the v16 champion over 48 held-out
+# seeds, round 29 clears 0.542 with orbit at its full 8.3% share, 0.604 at 4.3%, and 0.625 at
+# 2.2% -- the same as with no orbit at all -- while still putting 1.5 orbiting rocks in front
+# of the policy every episode. Saturation is what makes the round unpassable, not exposure.
+#
+# This is the rule the co-op work paid for: soften how much of a challenge there is, never
+# whether the skill is needed. Taking orbit out entirely would teach the policy it never has
+# to deal with one, and the next rung would have to unlearn that.
+#
+# The pool is drawn uniformly, so repeating the other eleven thins orbit without removing it,
+# exactly as repeating an entry in `asteroid_size` weights a rock size.
+#
+# `until` counts this file's own rounds, not the ladder's: round = 27 + until.
+
+# Round 28, the seam. Unchanged from the old ladder, no orbit yet.
+[[progression.phases]]
+until = 1
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian"]
+linear_probability = 0.0833333
+asteroid_size = ["medium", "medium", "large", "large"]
+# orbit share: 0.0%
+
+# Rounds 29-30. Orbit arrives at its thinnest, alongside the rock-mix bridge.
+[[progression.phases]]
+until = 3
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = ["medium", "large", "large", "large"]
+# orbit share: 2.1%
+
+# Rounds 31-32. The all-large step, bridged. Measured over four champions on 64 held-out
+# seeds each, round 31 costs -0.102 clear [-0.188, -0.012] against round 30 -- the largest
+# single-round drop on the ladder, and it is composition, not the ramp: rounds 29-30 run
+# three-quarters large and 31 went straight to all-large. The v21 champion plays round 31 at
+# 0.516 against a 0.75 gate, which is the range a run has stalled in before.
+#
+# So the same trick rounds 29-30 already use for the previous step: one intermediate mix,
+# seven-eighths large, before the full step at round 33. No rounds are added and no round is
+# renumbered -- the phase boundary moves, and `stepped()` ramps are untouched.
+[[progression.phases]]
+until = 5
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = ["medium", "large", "large", "large", "large", "large", "large", "large"]
+# orbit share: 2.1%
+
+# Rounds 33-39. All-large now; orbit still thin.
+[[progression.phases]]
+until = 12
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = "large"
+# orbit share: 2.1%
+
+# Rounds 40-48. Orbit doubles.
+[[progression.phases]]
+until = 21
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = "large"
+# orbit share: 4.0%
+
+# Rounds 49-52. Orbit at full share.
+[[progression.phases]]
+until = 25
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = "large"
+# orbit share: 7.7%
+
+# Rounds 53-82.
+[[progression.phases]]
+until = 55
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = ["large", "large", "large", "medium"]
+# orbit share: 7.7%
+
+# Rounds 83-96.
+[[progression.phases]]
+until = 69
+patterns = ["sine", "arc", "s_curve", "zigzag", "sawtooth", "lane_change", "corkscrew", "figure_eight", "spiral", "serpentine", "brownian", "orbit"]
+linear_probability = 0.0769231
+asteroid_size = "mixed"
+# orbit share: 7.7%

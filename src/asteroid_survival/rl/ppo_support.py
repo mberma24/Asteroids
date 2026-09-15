@@ -132,11 +132,11 @@ def _score(record: dict, completion_target: float,
             min(completion_ratio, accuracy_ratio), completion_ratio + accuracy_ratio)
 
 
-SMOOTHING_WINDOW = 3
+SMOOTHING_WINDOW = 4
 """Evaluations averaged before the champion is allowed to change.
 
-A single held-out evaluation is a small sample: at 32 episodes and a true completion rate
-near 60%, its standard error is about 8 points, so readings swing +-17 points on noise
+A single held-out evaluation is a small sample: at 64 episodes and a true completion rate
+near 60%, its standard error is about 6 points, so readings swing +-12 points on noise
 alone. Crowning a champion on the best single reading is therefore max-selection bias, and
 it is not hypothetical -- a champion was once installed on a reading of 84.4% whose true
 level, re-measured on 96 episodes, was 57.3%. Nothing could beat that phantom, so the
@@ -144,6 +144,13 @@ plateau logic fired forever, the learning rate collapsed to its floor, and the r
 repeatedly restored to a snapshot no better than what it already had.
 
 Averaging a few consecutive evaluations makes a fluke worth only 1/N of the signal.
+
+Four, not three, because `evaluation_panels` is 4: consecutive evaluations rotate through
+four disjoint seed blocks, so a window of four spans the whole held-out set exactly once --
+the same 256 episodes promotion pools over. At three, the champion was judged on 192 of
+those seeds and *which* 192 depended on the rotation phase, so two equally good policies
+could be compared on different tasks. This costs one more evaluation of evidence before the
+first install on a stage; promotion installs a champion regardless.
 """
 
 

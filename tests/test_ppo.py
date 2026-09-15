@@ -171,6 +171,48 @@ def test_a_sustained_improvement_still_installs(tmp_path):
     assert tracker.state["completion_estimate"] > 0.65
 
 
+def test_champion_waits_for_a_whole_panel_rotation(tmp_path):
+    """The window spans `evaluation_panels` (4) evaluations, which is the full held-out set.
+
+    Consecutive evaluations rotate through four disjoint seed blocks, so a shorter window
+    judges two policies on different subsets of seeds depending on rotation phase.
+    """
+    from asteroid_survival.rl.ppo_support import SMOOTHING_WINDOW
+
+    assert SMOOTHING_WINDOW == 4
+    tracker = _tracker(tmp_path)
+    tracker.consider(_record(250, 40, 0.55), _checkpoint(tmp_path, 250), allow_recovery=True)
+    installed = tracker.state["episode"]
+    for episode in (500, 750):
+        tracker.consider(_record(episode, 40, 0.90), _checkpoint(tmp_path, episode),
+                         allow_recovery=True)
+        assert tracker.state["episode"] == installed, (
+            "a partial rotation is not enough evidence to install a champion")
+    tracker.consider(_record(1000, 40, 0.90), _checkpoint(tmp_path, 1000),
+                     allow_recovery=True)
+    assert tracker.state["episode"] == 1000
+
+
+def test_champion_state_written_by_a_shorter_window_still_loads(tmp_path):
+    """A run resumed across this change carries a 3-element window; it must not break."""
+    import json
+
+    tracker = _tracker(tmp_path)
+    tracker.consider(_record(250, 40, 0.55), _checkpoint(tmp_path, 250), allow_recovery=True)
+    state = json.loads((tmp_path / "champion_state.json").read_text(encoding="utf-8"))
+    state["window"] = [0.55, 0.57, 0.59]
+    state["clear_window"] = [1.0, 1.0, 1.0]        # matches the incumbent's clear estimate
+    (tmp_path / "champion_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    resumed = _tracker(tmp_path)
+    assert resumed.bootstrap(tmp_path / "evaluation.jsonl") is False
+    assert resumed.state["window"] == [0.55, 0.57, 0.59]
+    # One more evaluation fills the window to four and the tracker works normally again.
+    resumed.consider(_record(500, 40, 0.95), _checkpoint(tmp_path, 500), allow_recovery=True)
+    assert len(resumed.state["window"]) == 4
+    assert resumed.state["episode"] == 500
+
+
 def test_promotion_to_a_new_stage_always_installs(tmp_path):
     tracker = _tracker(tmp_path)
     tracker.consider(_record(250, 40, 0.85), _checkpoint(tmp_path, 250), allow_recovery=True)

@@ -1,0 +1,4 @@
+# The bridged ladder with the v11 action-warning observation, matching v21's run.
+[curriculum]
+extends = "rl-survival-v3-bridge31.toml"
+observation_version = 11
