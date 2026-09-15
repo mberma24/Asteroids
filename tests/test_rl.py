@@ -434,6 +434,36 @@ def test_progress_graph_renders_in_terminal_without_saving(tmp_path):
     assert "⣿ Promotion" in chart and "P 500 → round-1" in chart
     assert "80.0% ┤" in chart and "40.0% ┤" in chart
     assert "Recent held-out evaluations:" not in chart
+
+
+def test_progress_graph_averages_each_column_when_evaluations_outnumber_pixels(tmp_path):
+    """500 evaluations across 145 columns drew a vertical stroke per column and filled in.
+
+    Every reading still counts -- it is averaged into its column -- but one x gets one y, so
+    the lines read as lines, and the per-evaluation markers go away because at that density
+    they were the entire chart.
+    """
+    import json
+
+    from asteroid_survival.rl.plotting import format_progress
+
+    run = tmp_path / "dense-run"
+    run.mkdir()
+    records = [
+        {"episode": episode, "training_stage": 0,
+         "stages": [{"name": "round-1", "clear_rate": 0.5 + 0.2 * (episode % 3) / 3,
+                     "survival_fraction": 0.8}]}
+        for episode in range(500, 500 * 600, 500)
+    ]
+    (run / "evaluation.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+    chart = format_progress(run, view="both", width=60)
+    assert "599 evaluations, averaged per column" in chart
+    assert "\u25cf" not in chart and "\u25c6" not in chart, "markers must go at this density"
+    assert "\u25cf Evaluation" not in chart, "and so must their legend entries"
+    # Intermediate axis labels, so a line halfway up the range can be read.
+    assert chart.count("\u252c") == 0 and chart.count("\u2524") >= 4
     assert not (run / "progress.svg").exists()
 
 

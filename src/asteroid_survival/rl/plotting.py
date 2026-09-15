@@ -128,14 +128,26 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
         for y in range(pixel_h):
             dot(promotion_layer, x, y)
 
+    # With more evaluations than the chart has horizontal pixels, every column becomes a
+    # vertical stroke between its best and worst reading and the plot fills with ink: at 500
+    # evaluations across 145 columns the lines, the markers and the noise are indistinguishable.
+    # Averaging each column keeps every reading -- one x gets one y -- and the line reads as a
+    # line again. Per-evaluation markers go with it; at that density they *were* the chart.
+    dense = any(len(values) > pixel_w for _, _, _, values in series)
     for layer, (_, _, _, values) in enumerate(series):
+        points = [position(step, value) for step, value in values]
+        if dense:
+            columns: dict[int, list[int]] = {}
+            for x, y in points:
+                columns.setdefault(x, []).append(y)
+            points = [(x, round(sum(ys) / len(ys))) for x, ys in sorted(columns.items())]
         previous = None
-        for step, value in values:
-            point = position(step, value)
+        for point in points:
             if previous is not None:
                 segment(layer, previous, point)
             dot(layer, *point)
-            point_marks[point[1] // 4][point[0] // 2].add(layer)
+            if not dense:
+                point_marks[point[1] // 4][point[0] // 2].add(layer)
             previous = point
 
     stage_changes = []
@@ -147,13 +159,17 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
     def painted(symbol: str, code: str) -> str:
         return f"\033[{code}m{symbol}\033[0m" if color else symbol
 
-    output = [f"Asteroids training progress — {Path(run_dir).name}",
-              "  " + "   ".join(
-                  f"{painted('⣿', _COLORS[metric][0])} {label}"
-                  for metric, _, label, _ in series)
-              + f"   {painted('●', '97')} Evaluation"
-              + f"   {painted('◆', '95')} Lines meet"
-              + f"   {painted('⣿', '32')} Promotion"]
+    legend = "  " + "   ".join(f"{painted('⣿', _COLORS[metric][0])} {label}"
+                               for metric, _, label, _ in series)
+    if dense:
+        legend += f"   {painted('⣿', '32')} Promotion"
+    else:
+        legend += (f"   {painted('●', '97')} Evaluation"
+                   f"   {painted('◆', '95')} Lines meet"
+                   f"   {painted('⣿', '32')} Promotion")
+    output = [f"Asteroids training progress — {Path(run_dir).name}", legend]
+    ticks = {0, chart_h - 1} | {round(fraction * (chart_h - 1))
+                                for fraction in (0.25, 0.5, 0.75)}
     for cell_y in range(chart_h):
         rendered = []
         for cell_x in range(chart_w):
@@ -180,15 +196,22 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
                 if promotion_layer in present:
                     code = "93"
             rendered.append(painted(symbol, code))
-        label = f"{max_rate:>6.1%} ┤" if cell_y == 0 else (
-                f"{min_rate:>6.1%} ┤" if cell_y == chart_h - 1 else "       │")
+        # Labelled only at the ends, the middle of the chart cannot be read at all: a line
+        # halfway up a 46-93% range is worth knowing to the point, not to the half-chart.
+        if cell_y in ticks:
+            rate = max_rate - (max_rate - min_rate) * cell_y / max(1, chart_h - 1)
+            label = f"{rate:>6.1%} ┤"
+        else:
+            label = "       │"
         output.append(label + "".join(rendered))
     promotion_axis = ["─"] * chart_w
     for step in promotion_steps:
         x, _ = position(step, min_rate)
         promotion_axis[x // 2] = "P"
     output.append("       └" + "".join(promotion_axis))
-    output.append(f"        {min_x:,}–{max_x:,} {x_label}")
+    output.append(f"        {min_x:,}–{max_x:,} {x_label}"
+                  + (f"  ({len(series[0][3]):,} evaluations, averaged per column)"
+                     if dense else ""))
     current_stage = rows[-1][1]
     for metric, symbol, label, values in series:
         current_values = [(step, _rate(stage, metric)) for step, name, stage in rows
