@@ -23,11 +23,25 @@ def _rate(stage: dict, metric: str) -> float | None:
     # Prefer the binary full-round outcome so the two plotted lines are informative.
     fields = ({"completion": ("clear_rate", "success_rate", "completion_rate"),
                "survival": ("survival_fraction", "mean_alive_ship_time_fraction")})
+    if metric == "overall":
+        # The two lines answer different questions -- did it finish the round at all, and how
+        # much of it did it survive -- and a run can move on one while the other sits still.
+        # Their mean is the single line for "how is it doing", weighting both equally. It is
+        # not either promotion gate; those are read separately, and `status` reports them.
+        parts = [value for value in (_rate(stage, "completion"), _rate(stage, "survival"))
+                 if value is not None]
+        return sum(parts) / len(parts) if parts else None
     for field in fields[metric]:
         value = stage.get(field)
         if value is not None:
             return float(value)
     return None
+
+
+# Line colour, then the brighter point colour, per metric. Magenta is reserved for a cell
+# where two lines overlap and yellow for one crossing a promotion marker, so neither is used
+# for a series of its own.
+_COLORS = {"completion": ("34", "94"), "survival": ("31", "91"), "overall": ("36", "96")}
 
 
 def _progress_records(run_dir: str | Path) -> list[dict]:
@@ -44,7 +58,7 @@ def _progress_records(run_dir: str | Path) -> list[dict]:
 def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
                     height: int = 20, color: bool = False) -> str:
     """Render held-out completion and survival history directly in a terminal."""
-    if view not in {"completion", "survival", "both"}:
+    if view not in {"completion", "survival", "overall", "both"}:
         raise ValueError(f"unknown graph view: {view}")
     records = _progress_records(run_dir)
     x_field = ("environment_steps"
@@ -57,7 +71,8 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
         rows.append((int(record[x_field]), name, stage))
 
     chosen = (("completion", "C", "Completion / clear"),
-              ("survival", "S", "Survival"))
+              ("survival", "S", "Survival"),
+              ("overall", "O", "Overall (mean of both)"))
     if view != "both":
         chosen = tuple(item for item in chosen if item[0] == view)
     series = []
@@ -74,7 +89,11 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
     chart_w = max(24, width - 9)
     chart_h = max(6, min(30, height))
     pixel_w, pixel_h = chart_w * 2, chart_h * 4
-    layers = [[[0 for _ in range(chart_w)] for _ in range(chart_h)] for _ in range(3)]
+    # One layer per series, then the promotion layer last, so adding a series cannot collide
+    # with it the way a fixed index would.
+    promotion_layer = len(series)
+    layers = [[[0 for _ in range(chart_w)] for _ in range(chart_h)]
+              for _ in range(len(series) + 1)]
     point_marks = [[set() for _ in range(chart_w)] for _ in range(chart_h)]
     min_x = min(step for _, _, _, values in series for step, _ in values)
     max_x = max(step for _, _, _, values in series for step, _ in values)
@@ -107,7 +126,7 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
     for step in promotion_steps:
         x, _ = position(step, min_rate)
         for y in range(pixel_h):
-            dot(2, x, y)
+            dot(promotion_layer, x, y)
 
     for layer, (_, _, _, values) in enumerate(series):
         previous = None
@@ -130,24 +149,35 @@ def format_progress(run_dir: str | Path, view: str = "both", width: int = 100,
 
     output = [f"Asteroids training progress — {Path(run_dir).name}",
               "  " + "   ".join(
-                  f"{painted('⣿', '34' if metric == 'completion' else '31')} {label}"
+                  f"{painted('⣿', _COLORS[metric][0])} {label}"
                   for metric, _, label, _ in series)
               + f"   {painted('●', '97')} Evaluation"
+              + f"   {painted('◆', '95')} Lines meet"
               + f"   {painted('⣿', '32')} Promotion"]
     for cell_y in range(chart_h):
         rendered = []
         for cell_x in range(chart_w):
-            masks = [layers[layer][cell_y][cell_x] for layer in range(3)]
-            bits = masks[0] | masks[1] | masks[2]
+            masks = [layers[layer][cell_y][cell_x] for layer in range(len(layers))]
+            bits = 0
+            for mask in masks:
+                bits |= mask
             symbol = " " if bits == 0 else chr(0x2800 + bits)
             present = {index for index, mask in enumerate(masks) if mask}
-            code = ("34" if present == {0} else "31" if present == {1} else
-                    "32" if present == {2} else "33" if 2 in present else "35")
+            lines = present - {promotion_layer}
+            if not lines:
+                code = "32"                                  # the promotion marker alone
+            elif promotion_layer in present:
+                code = "33"                                  # a line crossing that marker
+            elif len(lines) == 1:
+                code = _COLORS[series[next(iter(lines))][0]][0]
+            else:
+                code = "35"                                  # two or more lines in one cell
             points = point_marks[cell_y][cell_x]
             if points:
                 symbol = "◆" if len(points) > 1 else "●"
-                code = "95" if len(points) > 1 else ("94" if 0 in points else "91")
-                if 2 in present:
+                code = ("95" if len(points) > 1
+                        else _COLORS[series[next(iter(points))][0]][1])
+                if promotion_layer in present:
                     code = "93"
             rendered.append(painted(symbol, code))
         label = f"{max_rate:>6.1%} ┤" if cell_y == 0 else (

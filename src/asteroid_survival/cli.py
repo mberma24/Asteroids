@@ -623,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
     graph_parser = sub.add_parser("graph", help="graph held-out progress for a model run")
     graph_parser.add_argument("--run", type=Path, required=True)
     graph_parser.add_argument(
-        "--view", choices=("completion", "survival", "both"), default="both",
+        "--view", choices=("completion", "survival", "overall", "both"), default="both",
         help="rate lines to show in the terminal")
     graph_parser.add_argument(
         "--height", type=int, default=20,

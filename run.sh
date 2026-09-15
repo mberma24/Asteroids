@@ -631,7 +631,7 @@ cmd_finish() {        # continue until every curriculum stage is mastered (or sa
 cmd_graph() {
   local dir view
   case "${1:-}" in
-    completion|survival|both)
+    completion|survival|overall|both)
       dir="$(ls -dt models/*/ 2>/dev/null | head -1)"
       view="$1"
       ;;
@@ -1195,7 +1195,7 @@ Train
 Inspect
   ./run.sh status [dir]         training progress, newest run by default
   ./run.sh follow [dir]         status once, then stream evaluations as they land
-  ./run.sh graph [dir] [view]   terminal graph (`both`, `completion`, or `survival`)
+  ./run.sh graph [dir] [view]   terminal graph (`both`, `completion`, `survival`, or `overall`)
   ./run.sh baseline [N]         score the greedy controller
   ./run.sh test                 run the test suite
   ./run.sh test-team CHECKPOINT score a shared team policy (SHIPS/LEVEL overrides)

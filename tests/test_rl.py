@@ -422,6 +422,12 @@ def test_progress_graph_renders_in_terminal_without_saving(tmp_path):
     assert "C Completion / clear" in chart and "S Survival" in chart
     assert "40.0% → 60.0% (+20.0 pp; 2 evaluations on round-1)" in chart
     assert "70.0% → 80.0% (+10.0 pp; 2 evaluations on round-1)" in chart
+    # The overall line is the mean of the other two, so it moves by their average.
+    assert "O Overall (mean of both)" in chart
+    assert "55.0% → 70.0% (+15.0 pp; 2 evaluations on round-1)" in chart
+    assert "◆ Lines meet" in chart
+    alone = format_progress(run, view="overall", width=60)
+    assert "O Overall (mean of both)" in alone and "S Survival" not in alone
     assert "500–1,000 episodes" in chart
     assert "● Evaluation" in chart
     assert chart.count("●") + chart.count("◆") >= 3
